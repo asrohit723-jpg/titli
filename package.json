@@ -25,11 +25,12 @@
     "copyright": "© 2026 Titli",
     "directories": { "output": "dist", "buildResources": "build" },
     "files": ["src/**/*", "assets/**/*", "package.json"],
+    "afterPack": "scripts/after-pack.js",
     "extraResources": [{ "from": "native/mac/bin", "to": "bin", "filter": ["**/*"] }],
     "mac": {
       "category": "public.app-category.lifestyle",
       "icon": "build/icon.png",
-      "target": [{ "target": "dmg", "arch": ["universal"] }, { "target": "zip", "arch": ["universal"] }],
+      "target": [{ "target": "dmg", "arch": ["universal"] }],
       "identity": null,
       "x64ArchFiles": "Contents/Resources/bin/titli-presence",
       "hardenedRuntime": false,
