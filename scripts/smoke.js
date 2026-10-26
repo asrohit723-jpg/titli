@@ -19,11 +19,11 @@ app.whenReady().then(async () => {
   const t = global.__titli;
   for (const w of [t.panel.webContents]) w.on('console-message', (_e, level, msg) => { if (level >= 2) errors.push(msg); });
   t.showPanel();
-  await wait(800);
+  await wait(2000);   // a fresh window needs a moment for its first paint
   await save(t.panel.webContents, 'panel-onboarding.png');
   t.core.setName('Rohit');
   await wait(400);
-  await save(t.panel.webContents, 'panel-people.png');
+  await save(t.panel.webContents, 'panel-main.png');
   // CI machines look 'away' (no one is typing), so don't hold the butterfly for that here
   t.core.setSettings({ holdWhenAway: false, holdInMeetings: false });
   const seen = [];

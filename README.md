@@ -6,10 +6,11 @@ Tap a saved quick note (or just a heart) in your menu bar, and a small butterfly
 other person's Mac, lands in the top-right corner, opens its wings and shows your note. They can
 react with an emoji or send a butterfly back. No typing back, no chat: just a small moment.
 
-- **Quick notes**: save up to 12 short notes (60 characters max) and send one with a click, a number key, or from the menu-bar icon's right-click menu.
+- **Quick notes**: save up to 12 short notes (60 characters max), reorder them, and send one with a click, a number key, or from the menu-bar icon's right-click menu.
 - **One-to-one or groups**: pair with one person, or make a group where everyone gets the butterfly.
 - **Never at a bad moment**: butterflies wait while you're on a call (camera or mic in use), something is full screen, the screen is locked, the laptop is asleep, or you've stepped away. They're also invisible to screen sharing and recordings.
-- **Schedules**: a butterfly at a set time, once, every day or on weekdays. Handy as a gentle reminder.
+- **Schedules**: a butterfly at a set time, once, every day or on weekdays. Handy as a gentle reminder. Tap one to change it or send it now.
+- **Activity**: everything you sent and received in one timeline, with seen receipts and reactions.
 - **No accounts**: everything stays on your Mac. Butterflies travel through a free relay ([ntfy](https://ntfy.sh)), encrypted on your laptop so the relay can't read them.
 
 ## Run it on your Mac (from source)
@@ -26,8 +27,8 @@ npm start
 
 A butterfly icon appears in the menu bar. Click it, or press **⌥ Space** anywhere (⌃⌥ Space if another app already uses ⌥ Space).
 
-To try it alone: Settings → **Show a butterfly on my screen**.
-To try it with someone: both run Titli, one makes an invite code (People → Make an invite code), the other enters it.
+To try it alone: Settings (the gear) → **Show it on my screen**.
+To try it with someone: both run Titli, one makes a code (People → Make a code), the other enters it.
 
 ## Build the installer
 

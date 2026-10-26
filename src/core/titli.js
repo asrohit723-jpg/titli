@@ -101,6 +101,15 @@ class TitliCore extends EventEmitter {
     return { ok: true };
   }
 
+  // the same notes in a new order (the first nine get number keys)
+  reorderQuick(list) {
+    const same = Array.isArray(list) && list.length === this.s.quick.length && list.every(x => typeof x === 'string') &&
+      [...list].sort().join('\n') === [...this.s.quick].sort().join('\n');
+    if (!same) return { ok: false, error: 'Your notes changed while you were moving them. Try again.' };
+    this.s.quick = list.slice(); this._save();
+    return { ok: true };
+  }
+
   /* ---------------- pairing & groups ---------------- */
 
   createInvite() {
@@ -219,19 +228,33 @@ class TitliCore extends EventEmitter {
     if (!schedule.validTime(time)) return { ok: false, error: 'Pick a time.' };
     const t = text == null ? null : (clip(text, MAX_TEXT) || null);
     if (text != null && !t) return { ok: false, error: 'Write the note you want to schedule.' };
-    const s = { id: codes.newId(6), text: t, circleId, time, repeat: REPEATS.includes(repeat) ? repeat : 'daily', on: true, last: '' };
-    // a time earlier today means "from tomorrow", not "right now"
-    const now = new Date(this.now());
-    const [h, m] = time.split(':').map(Number);
-    const today = new Date(now); today.setHours(h, m, 0, 0);
-    if (today.getTime() <= now.getTime()) s.last = schedule.dayKey(now);
+    const s = { id: codes.newId(6), text: t, circleId, time, repeat: REPEATS.includes(repeat) ? repeat : 'daily', on: true, last: this._startDay(time) };
     this.s.schedules.push(s); this._save();
     return { ok: true, id: s.id };
   }
 
+  // a time earlier today means "from tomorrow", not "right now"
+  _startDay(time) {
+    const now = new Date(this.now());
+    const [h, m] = time.split(':').map(Number);
+    const today = new Date(now); today.setHours(h, m, 0, 0);
+    return today.getTime() <= now.getTime() ? schedule.dayKey(now) : '';
+  }
+
   updateSchedule(id, patch = {}) {
     const s = this.s.schedules.find(x => x.id === id);
-    if (!s) return { ok: false };
+    if (!s) return { ok: false, error: 'That schedule is gone.' };
+    if ('circleId' in patch && !this._circle(patch.circleId)) return { ok: false, error: 'Pick who it goes to.' };
+    if ('time' in patch && !schedule.validTime(patch.time)) return { ok: false, error: 'Pick a time.' };
+    let text = s.text;
+    if ('text' in patch) {
+      text = patch.text == null ? null : (clip(patch.text, MAX_TEXT) || null);
+      if (patch.text != null && !text) return { ok: false, error: 'Write the note you want to schedule.' };
+    }
+    s.text = text;
+    if ('circleId' in patch) s.circleId = patch.circleId;
+    if (REPEATS.includes(patch.repeat)) s.repeat = patch.repeat;
+    if ('time' in patch && patch.time !== s.time) { s.time = patch.time; s.last = this._startDay(s.time); }
     if (typeof patch.on === 'boolean') s.on = patch.on;
     this._save();
     return { ok: true };
@@ -267,7 +290,7 @@ class TitliCore extends EventEmitter {
     const circles = this.s.circles.map(c => ({
       id: c.id, kind: c.kind, name: circleName(c),
       members: Object.entries(c.members).filter(([id]) => id !== me.id).map(([, m]) => m.name || 'Someone'),
-      code: c.kind === 'group' ? c.code : undefined, owner: c.owner === me.id
+      code: c.kind === 'group' ? c.code : undefined, owner: c.owner === me.id, createdAt: c.createdAt || null
     }));
     const nameOf = id => { const c = circles.find(x => x.id === id); return c ? c.name : 'Someone'; };
     const next = schedule.nextRun(this.s.schedules, this.now());
@@ -281,8 +304,8 @@ class TitliCore extends EventEmitter {
       quick: this.s.quick.slice(),
       schedules: this.s.schedules.map(s => ({ ...s, to: nameOf(s.circleId) })),
       next: next ? { id: next.schedule.id, when: next.when, text: next.schedule.text, to: nameOf(next.schedule.circleId) } : null,
-      sent: this.s.sent.slice(0, 20).map(m => ({ id: m.id, text: m.text, at: m.at, scheduled: m.scheduled, to: nameOf(m.circleId), status: this._statusOf(m) })),
-      received: this.s.received.filter(r => r.kind === 'note').slice(0, 20).map(r => ({ id: r.id, text: r.text, fromName: r.fromName, circleName: r.circleName, at: r.at, react: r.react || null })),
+      sent: this.s.sent.slice(0, 20).map(m => ({ id: m.id, circleId: m.circleId, text: m.text, at: m.at, scheduled: m.scheduled, to: nameOf(m.circleId), status: this._statusOf(m) })),
+      received: this.s.received.filter(r => !r.preview).slice(0, 20).map(r => ({ id: r.id, kind: r.kind, circleId: r.circleId, text: r.text, fromName: r.fromName, circleName: r.circleName, at: r.at, react: r.react || null })),
       inboxCount: this.s.inbox.length,
       lastTo: this.s.lastTo
     };

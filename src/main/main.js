@@ -150,7 +150,7 @@ function togglePanel() {
 
 /* ---------------- talking to the panel ---------------- */
 
-const CORE_CALLS = new Set(['setName', 'setSettings', 'addQuick', 'removeQuick', 'createInvite', 'cancelInvite', 'joinCode', 'createGroup', 'leave', 'send', 'addSchedule', 'updateSchedule', 'removeSchedule', 'sendScheduleNow']);
+const CORE_CALLS = new Set(['setName', 'setSettings', 'addQuick', 'removeQuick', 'reorderQuick', 'createInvite', 'cancelInvite', 'joinCode', 'createGroup', 'leave', 'send', 'addSchedule', 'updateSchedule', 'removeSchedule', 'sendScheduleNow']);
 
 function fullState() {
   const snap = core.snapshot();

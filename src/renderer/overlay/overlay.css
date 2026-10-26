@@ -9,7 +9,7 @@ html,body{width:100%; height:100%; overflow:hidden; background:transparent; font
 .b-from{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; font-size:10.5px; color:var(--accent)}
 .b-close{width:18px; height:18px; flex:none; border-radius:50%; border:0; display:grid; place-items:center; cursor:pointer; padding:0; background:var(--glass-btn); color:var(--glass-ink)}
 .b-close svg{width:8px; height:8px; fill:none; stroke:currentColor; stroke-width:2.6; stroke-linecap:round}
-.b-note{margin:3px 2px 0 0; font-family:var(--font-display); font-style:italic; font-size:14px; line-height:1.2; overflow-wrap:anywhere; text-wrap:pretty}
+.b-note{margin:3px 2px 0 0; font-family:var(--font-display); font-variation-settings:"SOFT" 50; font-size:14px; line-height:1.22; overflow-wrap:anywhere; text-wrap:pretty}
 .b-note.b-heart{font-family:var(--font-body); font-style:normal; font-size:20px; line-height:1; color:var(--accent); text-align:center; margin:2px 0}
 .b-note.b-visit{font-family:var(--font-body); font-style:normal; font-size:12px; color:var(--glass-muted)}
 .b-react{display:flex; align-items:center; gap:1px; margin-top:5px; padding-top:5px; border-top:1px solid var(--glass-line)}

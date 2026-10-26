@@ -142,6 +142,11 @@ test('pair, send, receipts, reactions and a butterfly back', async t => {
   anu.react(anu.s.received[0].id, 'butterfly');
   await until(() => rohit.s.inbox.some(x => x.kind === 'visit'), 4000, 'butterfly back');
   assert.equal(rohit.s.inbox[0].fromName, 'Anu');
+  rohit.shown(rohit.s.inbox[0].id);
+  const back = rohit.snapshot().received[0];
+  assert.equal(back.kind, 'visit', 'a butterfly back shows in Activity');
+  assert.equal(back.circleId, cid);
+  assert.equal(rohit.snapshot().sent[0].circleId, cid);
 });
 
 test('groups: create, join by code, names and fan-out', async t => {
@@ -213,6 +218,35 @@ test('schedules fire through the core', async t => {
   assert.equal(core.s.sent[0].scheduled, true);
   clock += 45000;
   assert.equal(core.checkSchedules().length, 0);
+
+  // editing: switch it back on, move it later today, change the note and repeat
+  const id = core.s.schedules[0].id;
+  assert.ok(core.updateSchedule(id, { on: true, time: '11:05', text: 'Stretch', repeat: 'weekdays' }).ok);
+  assert.deepEqual([core.s.schedules[0].time, core.s.schedules[0].text, core.s.schedules[0].repeat], ['11:05', 'Stretch', 'weekdays']);
+  assert.equal(core.updateSchedule(id, { text: '   ' }).ok, false, 'empty note refused');
+  assert.equal(core.updateSchedule(id, { circleId: 'nope' }).ok, false);
+  assert.ok(core.updateSchedule(id, { text: null }).ok, 'a heart');
+  assert.equal(core.s.schedules[0].text, null);
+  clock = new Date(2026, 9, 26, 11, 5, 20).getTime();
+  assert.equal(core.checkSchedules().length, 1, 'fires at the new time');
+  // moving it to a time already past today waits for tomorrow
+  assert.ok(core.updateSchedule(id, { time: '09:00' }).ok);
+  clock += 60000;
+  assert.equal(core.checkSchedules().length, 0);
+});
+
+test('quick notes: reorder keeps the same notes', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-'));
+  const store = new Store(path.join(dir, 'q.json')); store.load();
+  const core = new TitliCore({ store, relay: new NtfyRelay({ server: 'http://127.0.0.1:9' }) });
+  const before = core.s.quick.slice();
+  const flipped = before.slice().reverse();
+  assert.ok(core.reorderQuick(flipped).ok);
+  assert.deepEqual(core.s.quick, flipped);
+  assert.equal(core.reorderQuick(flipped.slice(1)).ok, false, 'missing one');
+  assert.equal(core.reorderQuick([...flipped.slice(1), 'Sneaky new note']).ok, false, 'swapped one');
+  assert.equal(core.reorderQuick('nope').ok, false);
+  assert.deepEqual(core.s.quick, flipped);
 });
 
 test('store survives a corrupt file', () => {
