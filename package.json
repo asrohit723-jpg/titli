@@ -12,7 +12,7 @@
     "dev": "electron . --dev",
     "test": "node --test test/*.test.js",
     "build:helper": "bash native/mac/build.sh",
-    "dist": "npm run build:helper && electron-builder --mac --publish never",
+    "dist": "npm run build:helper && electron-builder --mac --arm64 --publish never && electron-builder --mac --x64 --publish never",
     "dist:dir": "npm run build:helper && electron-builder --mac --dir --publish never"
   },
   "devDependencies": {
@@ -30,7 +30,7 @@
     "mac": {
       "category": "public.app-category.lifestyle",
       "icon": "build/icon.png",
-      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "target": ["dmg"],
       "identity": null,
       "x64ArchFiles": "Contents/Resources/bin/titli-presence",
       "hardenedRuntime": false,

@@ -52,7 +52,8 @@ jobs:
       - name: Build the app
         run: |
           set -o pipefail
-          if ! npx electron-builder --mac --publish never 2>&1 | tee builder.log; then
+          # one at a time: two disk images built at once both mount as /Volumes/Titli and collide
+          if ! { npx electron-builder --mac --arm64 --publish never && npx electron-builder --mac --x64 --publish never; } 2>&1 | tee builder.log; then
             # surface the end of the log as an annotation, which is readable without downloading logs
             msg="$(tail -n 40 builder.log | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             echo "::error title=electron-builder failed::$msg"
