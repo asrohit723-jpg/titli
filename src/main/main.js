@@ -11,6 +11,7 @@ const presence = require('../core/presence');
 const { PresenceWatcher, helperPath } = require('./presence-mac');
 const { Overlay } = require('./overlay');
 const { Delivery } = require('./delivery');
+const { Updater } = require('./updater');
 
 const DEV = process.argv.includes('--dev');
 // ⌥ Space if it's free; apps like Alfred often use it, so fall back to ⌃⌥ Space
@@ -21,7 +22,7 @@ const PANEL_W = 372, PANEL_H = 640;
 if (!app.requestSingleInstanceLock()) { app.quit(); return; }
 if (process.platform === 'darwin' && app.dock) app.dock.hide();
 
-let tray = null, panel = null, overlay = null, core = null, watcher = null, delivery = null, store = null;
+let tray = null, panel = null, overlay = null, core = null, watcher = null, delivery = null, store = null, updater = null;
 const log = (...a) => { if (DEV) console.log('[titli]', ...a); };
 
 app.on('second-instance', () => showPanel());
@@ -37,6 +38,9 @@ app.whenReady().then(() => {
   overlay = new Overlay({ dev: DEV });
   watcher = new PresenceWatcher({ powerMonitor, helperPath: helperPath(app), log });
   delivery = new Delivery({ core, overlay, watcher, log });
+  updater = new Updater({ log });
+  updater.on('change', pushState);
+  updater.on('available', v => notify('A new Titli is ready', `Version ${v}. Open Titli and tap Update.`));
   overlay.setProtection(!store.state.settings.allowCapture);
 
   createTray();
@@ -49,6 +53,7 @@ app.whenReady().then(() => {
   core.start();
   watcher.start();
   delivery.start();
+  updater.start();
 
   // schedules: check twice a minute, and right after waking up
   core.checkSchedules();
@@ -61,12 +66,13 @@ app.whenReady().then(() => {
   applyLoginItem();
 
   if (!store.state.me.name) setTimeout(showPanel, 600); // first run: say hello
-  if (process.env.TITLI_SMOKE) global.__titli = { panel, overlay, core, delivery, watcher, showPanel, preview, store };
+  if (process.env.TITLI_SMOKE) global.__titli = { panel, overlay, core, delivery, watcher, updater, showPanel, preview, store };
 });
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (delivery) delivery.stop();
+  if (updater) updater.stop();
   if (watcher) watcher.stop();
   if (core) core.stop();
 });
@@ -92,6 +98,11 @@ function quickMenu() {
   const circles = snap.circles.filter(c => c.members.length);
   const to = circles.find(c => c.id === snap.lastTo) || circles[0];
   const items = [];
+  const up = updater && updater.snapshot();
+  if (up && up.status === 'available') {
+    items.push({ label: `Update Titli to ${up.latest}`, click: () => { showPanel(); updater.update(); } });
+    items.push({ type: 'separator' });
+  }
   if (!snap.me.name || !to) {
     items.push({ label: snap.me.name ? 'Pair with someone to start' : 'Set up Titli', click: showPanel });
   } else {
@@ -142,6 +153,7 @@ function showPanel() {
   panel.show();
   panel.focus();
   panel.webContents.send('panel:opened');
+  if (updater) updater.maybeCheck();
 }
 
 function togglePanel() {
@@ -159,7 +171,8 @@ function fullState() {
     ...snap,
     presence: { busy: p.busy, reason: p.reason, text: p.reason ? presence.REASON_TEXT[p.reason] : null, helper: watcher.helperOk },
     shortcut: shortcut ? shortcut[1] : null,
-    version: app.getVersion()
+    version: app.getVersion(),
+    update: updater ? updater.snapshot() : null
   };
 }
 
@@ -193,6 +206,8 @@ function wireIpc() {
     else if (action === 'copy' && typeof arg === 'string' && arg.length < 200) clipboard.writeText(arg);
     else if (action === 'open' && typeof arg === 'string' && /^https:\/\/(github\.com|docs\.ntfy\.sh)\//.test(arg)) shell.openExternal(arg);
     else if (action === 'preview') preview(typeof arg === 'string' ? arg : null);
+    else if (action === 'checkUpdate') updater.check({ manual: true });
+    else if (action === 'installUpdate') updater.update();
     return true;
   });
 }

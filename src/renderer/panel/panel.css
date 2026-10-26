@@ -66,6 +66,10 @@ kbd{font-family:var(--font-body)}
 .dot.warn, .status.hold .dot{background:var(--warn)}
 .status.off .dot{background:var(--dim)}
 .head .icon-btn{-webkit-app-region:no-drag}
+.update-pill{-webkit-app-region:no-drag; flex:none; height:30px; padding:0 11px 0 9px; border:0; border-radius:999px; background:var(--tint); color:var(--link); font-size:12.5px; font-weight:700; display:inline-flex; align-items:center; gap:5px; font-variant-numeric:tabular-nums}
+.update-pill svg{width:14px; height:14px}
+.update-pill:disabled{cursor:default; opacity:.85}
+.update-pill:not(:disabled):hover{background:var(--accent); color:var(--on-accent)}
 .tabs{display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:2px; margin:0 16px; padding:3px; background:var(--surface); border-radius:12px}
 .tab{height:34px; border:0; border-radius:9px; background:transparent; color:var(--mist); font-size:13px; font-weight:500; display:flex; align-items:center; justify-content:center; gap:5px}
 .tab[aria-selected="true"]{background:var(--tab-on); color:var(--ink); font-weight:600; box-shadow:var(--tab-shadow)}
@@ -246,15 +250,20 @@ kbd{font-family:var(--font-body)}
 .group-card{display:flex; flex-direction:column; border-radius:16px; background:var(--surface); border:1px solid var(--line)}
 .switch-row{display:flex; align-items:center; gap:12px; padding:13px 14px; cursor:pointer}
 .switch-row + .switch-row{border-top:1px solid var(--line)}
-.switch-row .st{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; font-weight:400}
-.switch-row b{font-size:14px; font-weight:600}
-.switch-row small{font-size:12px; color:var(--mist)}
+.switch-row .st, .update-row .st{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; font-weight:400}
+.switch-row b, .update-row b{font-size:14px; font-weight:600}
+.switch-row small, .update-row small{font-size:12px; color:var(--mist); overflow-wrap:anywhere}
 .row-btn{display:flex; align-items:center; gap:12px; padding:13px 14px; border:0; background:transparent; text-align:left; font-size:14px; font-weight:600; color:var(--ink)}
 .row-btn .grow{flex:1}
 .row-btn .val{font-size:13px; font-weight:400; color:var(--mist)}
 .row-btn svg{width:16px; height:16px; color:var(--dim); transition:transform .2s}
 .row-btn[aria-expanded="true"] svg{transform:rotate(90deg)}
 .relay-fields{display:flex; flex-direction:column; gap:8px; padding:0 14px 14px}
+.update-row{display:flex; align-items:center; gap:12px; padding:13px 14px}
+.update-row .btn{flex:none}
+.progress{height:4px; margin:0 14px 14px; border-radius:2px; background:var(--surface-2); overflow:hidden}
+.progress span{display:block; height:100%; width:0; background:var(--accent); transition:width .2s}
+.up-err{padding:0 14px 14px}
 .foot{display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:14px; border-top:1px solid var(--line)}
 
 .seg{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:2px; padding:3px; background:var(--surface); border-radius:12px}

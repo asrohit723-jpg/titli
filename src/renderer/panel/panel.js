@@ -139,7 +139,7 @@
     if (pairStep) { show('welcome2'); renderWelcome2(); return; }
     if (!view || view === 'welcome1' || view === 'welcome2') view = 'main';
     show(view);
-    renderStatus(); renderSend(); renderActivity(); renderSchedule(); renderPeople(); renderSettings(); renderQuickEdit();
+    renderStatus(); renderUpdate(); renderSend(); renderActivity(); renderSchedule(); renderPeople(); renderSettings(); renderQuickEdit();
     if (view === 'sched' && sf) renderSf();
     if (view === 'main' && tab === 'activity') writeSeen(newestReceived());
     renderTabDot();
@@ -172,6 +172,55 @@
       box.append(b);
     }
   }
+
+  /* Updates */
+  let lastUpdateErr = null;
+  const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+  const mb = n => `${Math.max(1, Math.round(n / 1048576))} MB`;
+  function renderUpdate() {
+    const u = S.update || { status: 'dev', current: S.version };
+    const pct = Math.round((u.progress || 0) * 100);
+    // header pill: one click updates
+    const pill = $('#updatePill');
+    pill.hidden = !['available', 'downloading', 'installing'].includes(u.status);
+    pill.disabled = u.status !== 'available';
+    $('#updatePillText').textContent = u.status === 'downloading' ? `Updating ${pct}%` : u.status === 'installing' ? 'Restarting…' : 'Update';
+    pill.setAttribute('aria-label', u.status === 'available' ? `Update Titli to ${u.latest}` : $('#updatePillText').textContent);
+    pill.title = u.status === 'available' ? `Titli ${u.latest} is ready` : '';
+    // Settings row
+    const b = $('#upBtn');
+    let title = `Titli ${u.current || S.version || ''}`, text = '', label = 'Check now', primary = false, disabled = false;
+    switch (u.status) {
+      case 'dev': text = 'Updates work in the installed app.'; break;
+      case 'idle': text = 'Titli checks for updates on its own.'; break;
+      case 'checking': text = 'Checking…'; label = 'Checking…'; disabled = true; break;
+      case 'uptodate': text = `Up to date · checked ${ago(u.checkedAt)}`; break;
+      case 'available': title = `Titli ${u.latest} is ready`; text = (u.notes ? u.notes + ' · ' : '') + mb(u.size); label = 'Update'; primary = true; break;
+      case 'downloading': title = `Getting Titli ${u.latest}`; text = `Downloading… ${pct}%`; label = 'Updating'; primary = true; disabled = true; break;
+      case 'installing': title = `Installing Titli ${u.latest}`; text = 'Titli will close and open again by itself.'; label = 'Restarting…'; primary = true; disabled = true; break;
+      case 'error': text = 'Couldn’t check for updates.'; label = 'Try again'; break;
+      default:
+    }
+    $('#upTitle').textContent = title;
+    $('#upText').textContent = text;
+    b.textContent = label;
+    b.className = primary ? 'btn primary pill' : 'btn chip';
+    b.disabled = disabled;
+    b.hidden = u.status === 'dev';
+    $('#upProgress').hidden = !(u.status === 'downloading' || u.status === 'installing');
+    $('#upBar').style.width = `${pct}%`;
+    const err = $('#upErr');
+    err.hidden = !u.error;
+    err.textContent = u.error || '';
+    if (u.error && u.error !== lastUpdateErr && view === 'main') toast(u.error);
+    lastUpdateErr = u.error || null;
+  }
+  const startUpdate = () => { if (S && S.update && S.update.status === 'available') api.ui('installUpdate'); };
+  $('#updatePill').addEventListener('click', startUpdate);
+  $('#upBtn').addEventListener('click', () => {
+    const st = S && S.update && S.update.status;
+    if (st === 'available') startUpdate(); else api.ui('checkUpdate');
+  });
 
   /* Send */
   function renderSend() {

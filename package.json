@@ -30,7 +30,7 @@
     "mac": {
       "category": "public.app-category.lifestyle",
       "icon": "build/icon.png",
-      "target": [{ "target": "dmg", "arch": ["universal"] }],
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
       "identity": null,
       "x64ArchFiles": "Contents/Resources/bin/titli-presence",
       "hardenedRuntime": false,
@@ -42,6 +42,7 @@
     },
     "dmg": {
       "title": "Titli",
+      "artifactName": "Titli-${version}-${arch}.dmg",
       "contents": [{ "x": 150, "y": 190 }, { "x": 390, "y": 190, "type": "link", "path": "/Applications" }],
       "window": { "width": 540, "height": 380 }
     }

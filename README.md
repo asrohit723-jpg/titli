@@ -33,7 +33,7 @@ To try it with someone: both run Titli, one makes a code (People → Make a code
 ## Build the installer
 
 ```bash
-npm run dist          # makes dist/Titli-<version>-universal.dmg
+npm run dist          # makes dist/Titli-<version>-arm64.dmg (Apple Silicon) and dist/Titli-<version>-x64.dmg (Intel)
 ```
 
 Or push a tag (`git tag v0.1.0 && git push --tags`) and GitHub Actions builds the `.dmg` and attaches it to a release.
@@ -41,6 +41,32 @@ Or push a tag (`git tag v0.1.0 && git push --tags`) and GitHub Actions builds th
 The app isn't signed with an Apple Developer ID yet, so the first time people open it macOS will block it.
 They right-click **Titli** in Applications and choose **Open**, or go to System Settings → Privacy & Security → **Open Anyway**.
 Signing and notarising (Apple Developer Program, $99/year) removes that step.
+
+## In-app updates
+
+Once Titli is installed, it updates itself: when a new version is out, an **Update** button appears at the
+top of the panel (and in Settings → Updates and the menu-bar right-click menu). One click downloads it,
+checks it, swaps it in and reopens Titli. There's no "Open Anyway" step for updates.
+
+How it stays safe: every build publishes a `latest-mac.json` signed with a private key that only GitHub
+Actions has. The app checks that signature with the public key it ships with (`src/main/update-key.pem`),
+then the download's size and SHA-256, the bundle id, the version and the code signature, before replacing
+anything. If any check fails, nothing is replaced.
+
+Updates come from a separate **public** repo, `asrohit723-jpg/titli-releases`, which holds only the
+downloads. The code stays private. One-time setup:
+
+1. Create a public repo named `titli-releases` on GitHub, and tick **Add a README** so it isn't empty.
+2. Make a token: GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token.
+   Repository access: **Only select repositories** → `titli-releases`. Permissions: **Contents → Read and write**.
+3. In this repo: Settings → Secrets and variables → Actions → New repository secret, twice:
+   - `RELEASES_TOKEN`: the token from step 2
+   - `UPDATE_SIGNING_KEY`: the private key (the whole `-----BEGIN PRIVATE KEY-----` block)
+
+Then every run of the **Build** workflow (Actions → Build → Run workflow) gets a new version number
+(`0.1.<run>`) and is published to `titli-releases`, where installed apps find it within a few hours or as
+soon as someone opens the panel. Without the secrets, the build still runs and its installers are kept as a
+workflow artifact; it just isn't published as an update.
 
 ## How it works
 
@@ -53,6 +79,7 @@ Signing and notarising (Apple Developer Program, $99/year) removes that step.
 | When a butterfly may land | `src/core/presence.js`, `src/main/delivery.js` |
 | Camera / mic / full-screen checks | `native/mac/TitliPresence.swift` |
 | Menu bar, panel, shortcut, notifications | `src/main/main.js` |
+| Updates (check, download, verify, swap) | `src/main/updater.js`, `src/core/update-manifest.js` |
 | The see-through window the butterfly flies in | `src/main/overlay.js`, `src/renderer/overlay/` |
 | The 3D butterfly | `src/renderer/overlay/overlay.js` (three.js) |
 

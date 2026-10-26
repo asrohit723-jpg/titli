@@ -23,34 +23,90 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     permissions:
-      contents: write   # to attach the .dmg to the release
+      contents: write   # to attach the .dmg to a tag's release
+    env:
+      CAN_SIGN_UPDATES: ${{ secrets.UPDATE_SIGNING_KEY != '' }}
+      CAN_PUBLISH: ${{ secrets.RELEASES_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci
+
+      # every build gets a new version (0.1.<run number>), so installed apps can tell it's newer
+      - name: Set the version
+        run: |
+          V="$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}"
+          npm pkg set version="$V"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          { echo 'NOTES<<NOTES_END'; git log -1 --format=%s; echo 'NOTES_END'; } >> "$GITHUB_ENV"
+          echo "Building Titli $V"
+
       - name: Build the presence helper
         run: npm run build:helper
       - name: Smoke test
         run: TITLI_SMOKE_OUT="$PWD/dist/smoke" npx electron scripts/smoke.js
         timeout-minutes: 3
+
+      # one build for Apple Silicon and one for Intel: each about half the size of a universal app
       - name: Build the app
         run: npx electron-builder --mac --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Check the app is signed and complete
+
+      - name: Check both apps are signed, complete and versioned
         run: |
-          codesign --verify --deep --strict --verbose=2 dist/mac-universal/Titli.app
-          test -x dist/mac-universal/Titli.app/Contents/Resources/bin/titli-presence
-          lipo -archs dist/mac-universal/Titli.app/Contents/Resources/bin/titli-presence
+          for app in dist/mac*/Titli.app; do
+            arch="$(lipo -archs "$app/Contents/MacOS/Titli")"
+            case "$arch" in arm64) echo "ARM_APP=$app" >> "$GITHUB_ENV";; x86_64) echo "X64_APP=$app" >> "$GITHUB_ENV";; esac
+            codesign --verify --deep --strict --verbose=2 "$app"
+            test -x "$app/Contents/Resources/bin/titli-presence"
+            test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = "$VERSION"
+            echo "$app: $arch, $VERSION"
+          done
           ls -lh dist/*.dmg
+
+      - name: Zip the apps for in-app updates
+        run: |
+          test -n "$ARM_APP" && test -n "$X64_APP"
+          ditto -c -k --sequesterRsrc --keepParent "$ARM_APP" "dist/Titli-$VERSION-arm64-mac.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$X64_APP" "dist/Titli-$VERSION-x64-mac.zip"
+          ls -lh dist/*.zip
+
+      - name: Sign the update manifest
+        if: env.CAN_SIGN_UPDATES == 'true'
+        run: node scripts/make-manifest.js
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Titli-mac
+          name: Titli-mac-${{ env.VERSION }}
           path: |
             dist/*.dmg
             dist/smoke/*.png
-      - name: Attach to the release
+
+      # the public repo the app updates from (the code itself stays private)
+      - name: Publish to titli-releases
+        if: env.CAN_PUBLISH == 'true' && env.CAN_SIGN_UPDATES == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: asrohit723-jpg/titli-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: v${{ env.VERSION }}
+          name: Titli ${{ env.VERSION }}
+          body: ${{ env.NOTES }}
+          make_latest: true
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-mac.json
+
+      - name: Say what's missing
+        if: env.CAN_PUBLISH != 'true' || env.CAN_SIGN_UPDATES != 'true'
+        run: echo "::warning::Built Titli $VERSION but didn't publish an update. Add the RELEASES_TOKEN and UPDATE_SIGNING_KEY secrets (see README, In-app updates)."
+
+      - name: Attach to this repo's release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
