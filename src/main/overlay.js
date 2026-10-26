@@ -25,8 +25,12 @@ class Overlay extends EventEmitter {
     screen.on('display-removed', () => this._fit());
   }
 
+  // Mac: the whole screen, perching just under the menu bar.
+  // Windows: the work area only (a topmost window the size of the whole screen makes Windows treat it
+  // as a full-screen app), perching low enough to clear the title bar and close button of a maximised window.
   geometry() {
     const d = screen.getPrimaryDisplay();
+    if (process.platform === 'win32') return { bounds: d.workArea, menubar: 36 };
     return { bounds: d.bounds, menubar: Math.max(0, d.workArea.y - d.bounds.y) };
   }
 
@@ -40,7 +44,7 @@ class Overlay extends EventEmitter {
       webPreferences: { preload: path.join(__dirname, '../preload/overlay.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false }
     });
     this.win.setAlwaysOnTop(true, 'screen-saver');
-    this.win.setVisibleOnAllWorkspaces(true);       // follows you across Spaces; never over full-screen apps
+    if (process.platform === 'darwin') this.win.setVisibleOnAllWorkspaces(true); // follows you across Spaces; never over full-screen apps
     this.win.setContentProtection(this.protect);     // invisible to screen sharing and recordings
     this.win.setIgnoreMouseEvents(true, { forward: true });
     this.ready = new Promise(res => this.win.webContents.once('did-finish-load', res));

@@ -130,7 +130,12 @@
   /* ---------- rendering ---------- */
   function render() {
     if (!S) return;
-    if (!S.me.name) { show('welcome1'); return; }
+    if (!S.me.name) {
+      show('welcome1');
+      // Windows tucks new tray icons under the ^ arrow, so say where Titli lives
+      if (S.platform === 'win32') $('#w1Hint').textContent = `Titli lives by the clock (under the ^ arrow). ${S.shortcut || 'Ctrl+Alt+Space'} opens it any time.`;
+      return;
+    }
     if (pairStep && sendable().length) {
       pairStep = false;
       view = 'main'; selectTab('send');

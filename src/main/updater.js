@@ -1,10 +1,12 @@
 'use strict';
 // Keeps Titli up to date without a trip to GitHub.
-//   check:  read the signed latest-mac.json from the public releases repo
-//   update: download this Mac's zip, check its size and SHA-256, unpack it, check it's a whole,
-//           correctly signed Titli of the promised version, then quit, swap the app and reopen it.
-// Files we download ourselves aren't quarantined, so the new version opens without the
-// "Open Anyway" step. That's why every check above has to pass before anything is replaced.
+//   check:  read the signed latest-mac.json / latest-win.json from the public releases repo
+//   update: download this computer's file and check its size and SHA-256 against the signed manifest.
+//           Mac: unpack the zip, check it's a whole, correctly signed Titli of the promised version,
+//                then quit, swap the app and reopen it.
+//           Windows: run the installer silently; it replaces Titli and opens it again.
+// Files we download ourselves aren't marked as "from the internet", so the new version opens without
+// the "Open Anyway" / SmartScreen step. That's why every check has to pass before anything runs.
 
 const { app, net } = require('electron');
 const { EventEmitter } = require('events');
@@ -16,7 +18,9 @@ const { execFile, spawn } = require('child_process');
 const { verifyManifest, compareVersions } = require('../core/update-manifest');
 
 const RELEASES = 'https://github.com/asrohit723-jpg/titli-releases/releases';
-const FEED = `${RELEASES}/latest/download/latest-mac.json`;
+const WIN = process.platform === 'win32';
+const PLATFORM = WIN ? 'win' : 'mac';
+const FEED = `${RELEASES}/latest/download/latest-${PLATFORM}.json`;
 const BUNDLE_ID = 'app.titli.mac';
 const CHECK_EVERY = 6 * 3600 * 1000;
 const PUBLIC_KEY = (() => { try { return fs.readFileSync(path.join(__dirname, 'update-key.pem'), 'utf8'); } catch (e) { return null; } })();
@@ -34,6 +38,7 @@ function currentBundle() {
 
 // where the new version would go, or why it can't
 function installTarget() {
+  if (WIN) return app.isPackaged ? { bundle: null } : { error: 'Updates work in the installed app.' };
   const bundle = currentBundle();
   if (!bundle) return { error: 'Updates work in the installed app.' };
   if (bundle.includes('/AppTranslocation/') || bundle.startsWith('/Volumes/')) {
@@ -47,7 +52,7 @@ function installTarget() {
 function friendly(e) {
   const m = String(e && e.message || e);
   if (/ENOTFOUND|ECONN|ERR_INTERNET|ERR_NAME|ERR_NETWORK|ERR_CONNECTION|ETIMEDOUT|network/i.test(m)) return 'Couldn’t reach the internet. Try again in a moment.';
-  if (/ENOSPC/.test(m)) return 'Your Mac is out of space for the update.';
+  if (/ENOSPC/.test(m)) return 'Your computer is out of space for the update.';
   return m.length < 160 ? m : 'The update didn’t work. Try again.';
 }
 
@@ -67,6 +72,7 @@ class Updater extends EventEmitter {
 
   start() {
     if (!app.isPackaged || !PUBLIC_KEY) return;
+    sweepOldDownloads();
     setTimeout(() => this.check(), 20000);
     this._timer = setInterval(() => this.check(), CHECK_EVERY);
   }
@@ -85,9 +91,9 @@ class Updater extends EventEmitter {
       const res = await net.fetch(FEED, { cache: 'no-store' });
       if (res.status === 404) { this._set({ status: 'uptodate', checkedAt: Date.now() }); return; } // nothing published yet
       if (!res.ok) throw new Error(`The update server answered ${res.status}.`);
-      const m = verifyManifest(await res.text(), PUBLIC_KEY);
+      const m = verifyManifest(await res.text(), PUBLIC_KEY, { platform: PLATFORM });
       const build = m.builds[process.arch];
-      if (!build) throw new Error('There’s no update for this kind of Mac yet.');
+      if (!build) throw new Error('There’s no update for this kind of computer yet.');
       if (compareVersions(m.version, app.getVersion()) <= 0) {
         this.manifest = null;
         this._set({ status: 'uptodate', latest: m.version, notes: null, checkedAt: Date.now() });
@@ -119,11 +125,11 @@ class Updater extends EventEmitter {
     this._set({ status: 'downloading', progress: 0, error: null });
     try {
       // 1. download, hashing as we go
-      const zip = path.join(dir, b.file);
+      const file = path.join(dir, b.file);
       const res = await net.fetch(`${RELEASES}/download/v${m.version}/${encodeURIComponent(b.file)}`, { cache: 'no-store' });
       if (!res.ok || !res.body) throw new Error(`The download failed (${res.status}). Try again.`);
       const hash = crypto.createHash('sha256');
-      out = fs.createWriteStream(zip);
+      out = fs.createWriteStream(file);
       reader = res.body.getReader();
       let got = 0, lastTell = 0;
       for (;;) {
@@ -139,10 +145,18 @@ class Updater extends EventEmitter {
       out = null; reader = null;
       if (got !== b.size || hash.digest('hex') !== b.sha256) throw new Error('The download didn’t match what was published, so it wasn’t installed.');
 
-      // 2. unpack and check it's the Titli we were promised
       this._set({ status: 'installing', progress: 1 });
+      if (WIN) {
+        // 2w. the installer (verified above) replaces Titli quietly and opens it again; we just get out of its way
+        spawn(file, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+        this.log('installer started for', m.version);
+        setTimeout(() => app.quit(), 300);
+        return { ok: true };
+      }
+
+      // 2. unpack and check it's the Titli we were promised
       const unpacked = path.join(dir, 'new');
-      await run('/usr/bin/ditto', ['-x', '-k', zip, unpacked]);
+      await run('/usr/bin/ditto', ['-x', '-k', file, unpacked]);
       const fresh = path.join(unpacked, 'Titli.app');
       const plist = path.join(fresh, 'Contents', 'Info.plist');
       const id = await run('/usr/bin/plutil', ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', plist]);
@@ -172,6 +186,18 @@ class Updater extends EventEmitter {
       return { ok: false, error: friendly(e) };
     }
   }
+}
+
+// downloads left behind by earlier updates (a Windows installer can't delete the folder it ran from)
+function sweepOldDownloads() {
+  fs.readdir(os.tmpdir(), (err, names) => {
+    if (err) return;
+    for (const n of names) {
+      if (!n.startsWith('titli-update-')) continue;
+      const p = path.join(os.tmpdir(), n);
+      fs.stat(p, (e, st) => { if (!e && Date.now() - st.mtimeMs > 3600 * 1000) fs.rm(p, { recursive: true, force: true }, () => {}); });
+    }
+  });
 }
 
 module.exports = { Updater, installTarget, currentBundle };

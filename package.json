@@ -11,9 +11,10 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "node --test test/*.test.js",
-    "build:helper": "bash native/mac/build.sh",
+    "build:helper": "node scripts/build-helper.js",
     "dist": "npm run build:helper && electron-builder --mac --arm64 --publish never && electron-builder --mac --x64 --publish never",
-    "dist:dir": "npm run build:helper && electron-builder --mac --dir --publish never"
+    "dist:dir": "npm run build:helper && electron-builder --mac --dir --publish never",
+    "dist:win": "npm run build:helper && electron-builder --win --x64 --publish never"
   },
   "devDependencies": {
     "electron": "33.4.11",
@@ -23,14 +24,22 @@
     "appId": "app.titli.mac",
     "productName": "Titli",
     "copyright": "© 2026 Titli",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["src/**/*", "assets/**/*", "package.json"],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
     "afterPack": "scripts/after-pack.js",
-    "extraResources": [{ "from": "native/mac/bin", "to": "bin", "filter": ["**/*"] }],
     "mac": {
       "category": "public.app-category.lifestyle",
       "icon": "build/icon.png",
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "identity": null,
       "x64ArchFiles": "Contents/Resources/bin/titli-presence",
       "hardenedRuntime": false,
@@ -38,13 +47,64 @@
         "LSUIElement": true,
         "NSCameraUsageDescription": "Titli only checks whether your camera is already in use, so butterflies wait until your call is over. It never turns the camera on.",
         "NSMicrophoneUsageDescription": "Titli only checks whether your microphone is already in use, so butterflies wait until your call is over. It never records."
-      }
+      },
+      "extraResources": [
+        {
+          "from": "native/mac/bin",
+          "to": "bin",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
     },
     "dmg": {
       "title": "Titli",
       "artifactName": "Titli-${version}-${arch}.dmg",
-      "contents": [{ "x": 150, "y": 190 }, { "x": 390, "y": 190, "type": "link", "path": "/Applications" }],
-      "window": { "width": 540, "height": 380 }
+      "contents": [
+        {
+          "x": 150,
+          "y": 190
+        },
+        {
+          "x": 390,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "native/win/bin",
+          "to": "bin",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Titli-Setup-${version}-${arch}.${ext}",
+      "shortcutName": "Titli",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     }
   }
 }

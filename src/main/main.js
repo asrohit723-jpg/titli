@@ -1,6 +1,7 @@
 'use strict';
-// Titli lives in the menu bar. Click the butterfly (or press ⌥ Space anywhere) to open the panel;
-// right-click it to send a quick note without opening anything.
+// Titli lives in the menu bar on a Mac and by the clock on Windows. Click the butterfly (or press
+// ⌥ Space / Ctrl+Alt+Space anywhere) to open the panel; right-click it to send a quick note without
+// opening anything.
 
 const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, powerMonitor, Notification, nativeImage, clipboard, shell } = require('electron');
 const path = require('path');
@@ -8,19 +9,25 @@ const { Store } = require('../core/store');
 const { NtfyRelay } = require('../core/relay');
 const { TitliCore } = require('../core/titli');
 const presence = require('../core/presence');
-const { PresenceWatcher, helperPath } = require('./presence-mac');
+const { PresenceWatcher, helperPath } = require('./presence-watch');
+const { panelBounds } = require('./position');
 const { Overlay } = require('./overlay');
 const { Delivery } = require('./delivery');
 const { Updater } = require('./updater');
 
 const DEV = process.argv.includes('--dev');
-// ⌥ Space if it's free; apps like Alfred often use it, so fall back to ⌃⌥ Space
-const SHORTCUTS = [['Alt+Space', '⌥ Space'], ['Control+Alt+Space', '⌃⌥ Space']];
+const MAC = process.platform === 'darwin', WIN = process.platform === 'win32';
+// Mac: ⌥ Space if it's free (apps like Alfred often use it), else ⌃⌥ Space.
+// Windows: Alt+Space belongs to the window menu there, so Ctrl+Alt+Space, else Ctrl+Shift+Space.
+const SHORTCUTS = MAC
+  ? [['Alt+Space', '⌥ Space'], ['Control+Alt+Space', '⌃⌥ Space']]
+  : [['Control+Alt+Space', 'Ctrl+Alt+Space'], ['Control+Shift+Space', 'Ctrl+Shift+Space']];
 let shortcut = null; // [accelerator, label] that we managed to register
 const PANEL_W = 372, PANEL_H = 640;
 
 if (!app.requestSingleInstanceLock()) { app.quit(); return; }
-if (process.platform === 'darwin' && app.dock) app.dock.hide();
+if (MAC && app.dock) app.dock.hide();
+if (WIN) app.setAppUserModelId('app.titli.mac'); // matches the installer's shortcut, so notifications show
 
 let tray = null, panel = null, overlay = null, core = null, watcher = null, delivery = null, store = null, updater = null;
 const log = (...a) => { if (DEV) console.log('[titli]', ...a); };
@@ -80,8 +87,9 @@ app.on('will-quit', () => {
 /* ---------------- menu bar ---------------- */
 
 function trayImage() {
-  const img = nativeImage.createFromPath(path.join(__dirname, '../../assets/trayTemplate.png'));
-  img.setTemplateImage(true);
+  // Mac: a black template icon the menu bar tints. Windows: the coloured butterfly, readable on light and dark taskbars.
+  const img = nativeImage.createFromPath(path.join(__dirname, '../../assets', MAC ? 'trayTemplate.png' : 'trayWin.png'));
+  if (MAC) img.setTemplateImage(true);
   return img;
 }
 
@@ -89,6 +97,7 @@ function createTray() {
   tray = new Tray(trayImage());
   tray.setToolTip('Titli');
   tray.on('click', togglePanel);
+  if (WIN) tray.on('double-click', showPanel);
   tray.on('right-click', () => tray.popUpContextMenu(quickMenu()));
 }
 
@@ -127,24 +136,22 @@ function createPanel() {
   panel = new BrowserWindow({
     width: PANEL_W, height: PANEL_H, show: false, frame: false, resizable: false, movable: false,
     minimizable: false, maximizable: false, fullscreenable: false, skipTaskbar: true, alwaysOnTop: true,
-    transparent: true, backgroundColor: '#00000000', hasShadow: true, roundedCorners: true,
+    transparent: true, backgroundColor: '#00000000', hasShadow: MAC, roundedCorners: true,
     webPreferences: { preload: path.join(__dirname, '../preload/panel.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
-  panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  if (MAC) panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   panel.loadFile(path.join(__dirname, '../renderer/panel/index.html'));
-  panel.on('blur', () => { if (!panel.webContents.isDevToolsOpened()) panel.hide(); });
+  panel.on('blur', () => { if (!panel.webContents.isDevToolsOpened()) { panel.hide(); hiddenAt = Date.now(); } });
   panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   panel.webContents.on('will-navigate', e => e.preventDefault());
 }
 
 function positionPanel() {
-  const tb = tray.getBounds();
-  const display = screen.getDisplayNearestPoint({ x: tb.x || 0, y: tb.y || 0 });
-  const wa = display.workArea;
-  let x = Math.round((tb.x || wa.x + wa.width) + (tb.width || 0) / 2 - PANEL_W / 2);
-  x = Math.max(wa.x + 8, Math.min(x, wa.x + wa.width - PANEL_W - 8));
-  const y = wa.y + 6;
-  panel.setBounds({ x, y, width: PANEL_W, height: Math.min(PANEL_H, wa.height - 12) });
+  let tb = null;
+  try { tb = tray.getBounds(); } catch (e) { tb = null; }
+  const hasTray = tb && tb.width > 0;
+  const display = hasTray ? screen.getDisplayNearestPoint({ x: tb.x + tb.width / 2, y: tb.y + tb.height / 2 }) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  panel.setBounds(panelBounds({ tray: hasTray ? tb : null, work: display.workArea, width: PANEL_W, height: PANEL_H, platform: process.platform }));
 }
 
 function showPanel() {
@@ -156,8 +163,11 @@ function showPanel() {
   if (updater) updater.maybeCheck();
 }
 
+// clicking the icon while the panel is open first blurs (and hides) it; don't pop it straight back up
+let hiddenAt = 0;
 function togglePanel() {
-  if (panel && panel.isVisible()) panel.hide(); else showPanel();
+  if (panel && panel.isVisible()) panel.hide();
+  else if (Date.now() - hiddenAt > 300) showPanel();
 }
 
 /* ---------------- talking to the panel ---------------- */
@@ -171,6 +181,7 @@ function fullState() {
     ...snap,
     presence: { busy: p.busy, reason: p.reason, text: p.reason ? presence.REASON_TEXT[p.reason] : null, helper: watcher.helperOk },
     shortcut: shortcut ? shortcut[1] : null,
+    platform: process.platform,
     version: app.getVersion(),
     update: updater ? updater.snapshot() : null
   };

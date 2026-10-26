@@ -62,6 +62,22 @@ test('update manifest: well signed but malformed is still refused', () => {
   }
 });
 
+test('update manifest: Mac and Windows manifests only work on their own platform', () => {
+  const k = pair();
+  const win = { ...body(), platform: 'win', builds: { x64: { file: 'Titli-Setup-0.1.12-x64.exe', size: 90000000, sha256: 'd'.repeat(64) } } };
+  const winText = JSON.stringify(signManifest(win, k.priv));
+  assert.equal(verifyManifest(winText, k.pub, { platform: 'win' }).builds.x64.file, 'Titli-Setup-0.1.12-x64.exe');
+  assert.throws(() => verifyManifest(winText, k.pub, { platform: 'mac' }), /different kind/);
+  // Mac manifests from before Windows (no platform field) still count as Mac ones
+  assert.ok(verifyManifest(JSON.stringify(signManifest(body(), k.priv)), k.pub, { platform: 'mac' }));
+  assert.throws(() => verifyManifest(JSON.stringify(signManifest(body(), k.priv)), k.pub, { platform: 'win' }), /different kind/);
+  // a Windows manifest can't point at a zip, a Mac one can't point at an exe
+  const wrongFile = { ...win, builds: { x64: { ...win.builds.x64, file: 'Titli.zip' } } };
+  assert.throws(() => verifyManifest(JSON.stringify(signManifest(wrongFile, k.priv)), k.pub, { platform: 'win' }), /looks wrong/);
+  const macExe = { ...body(), platform: 'mac', builds: { arm64: { ...body().builds.arm64, file: 'Titli.exe' } } };
+  assert.throws(() => verifyManifest(JSON.stringify(signManifest(macExe, k.priv)), k.pub, { platform: 'mac' }), /looks wrong/);
+});
+
 test('update manifest: the shipped public key is a valid Ed25519 key', () => {
   const pem = fs.readFileSync(path.join(__dirname, '../src/main/update-key.pem'), 'utf8');
   assert.equal(crypto.createPublicKey(pem).asymmetricKeyType, 'ed25519');

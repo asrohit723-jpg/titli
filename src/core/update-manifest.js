@@ -23,10 +23,10 @@ function signManifest(body, privateKeyPem) {
 }
 
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
-const FILE_RE = /^[A-Za-z0-9._-]+\.zip$/;
+const FILE_RE = { mac: /^[A-Za-z0-9._-]+\.zip$/, win: /^[A-Za-z0-9._-]+\.exe$/ };
 
-// returns the manifest if it's genuine and well formed; throws otherwise
-function verifyManifest(text, publicKeyPem) {
+// returns the manifest if it's genuine, well formed and for this platform (mac | win); throws otherwise
+function verifyManifest(text, publicKeyPem, { platform = 'mac' } = {}) {
   let m;
   try { m = JSON.parse(text); } catch (e) { throw new Error('The update information is unreadable.'); }
   if (!m || typeof m !== 'object' || typeof m.sig !== 'string') throw new Error('The update isn’t signed.');
@@ -35,10 +35,12 @@ function verifyManifest(text, publicKeyPem) {
   try { ok = crypto.verify(null, Buffer.from(canonical(body)), publicKeyPem, Buffer.from(sig, 'base64')); } catch (e) { ok = false; }
   if (!ok) throw new Error('The update’s signature doesn’t match, so it wasn’t installed.');
   if (body.app !== APP_ID) throw new Error('That update is for a different app.');
+  // manifests from before Windows existed have no platform and are Mac ones
+  if ((body.platform || 'mac') !== platform) throw new Error('That update is for a different kind of computer.');
   if (!VERSION_RE.test(body.version || '')) throw new Error('The update has a strange version number.');
   if (!body.builds || typeof body.builds !== 'object') throw new Error('The update lists no downloads.');
   for (const [arch, b] of Object.entries(body.builds)) {
-    if (!b || !FILE_RE.test(b.file || '') || !/^[0-9a-f]{64}$/.test(b.sha256 || '') || !Number.isInteger(b.size) || b.size <= 0 || b.size > MAX_SIZE) {
+    if (!b || !(FILE_RE[platform] || FILE_RE.mac).test(b.file || '') || !/^[0-9a-f]{64}$/.test(b.sha256 || '') || !Number.isInteger(b.size) || b.size <= 0 || b.size > MAX_SIZE) {
       throw new Error(`The ${arch} download in the update looks wrong.`);
     }
   }

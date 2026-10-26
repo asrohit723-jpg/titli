@@ -1,7 +1,7 @@
 'use strict';
 // Collects the signals that tell us whether now is a good moment for a butterfly:
 //  - Electron's powerMonitor: sleep, screen lock, how long since the last keypress or mouse move
-//  - the small native helper (native/mac): camera or microphone in use, something full screen
+//  - a small native helper (native/mac or native/win): camera or microphone in use, something full screen
 // If the helper is missing, Titli still works; it just can't see calls.
 
 const { EventEmitter } = require('events');
@@ -45,7 +45,9 @@ class PresenceWatcher extends EventEmitter {
       if (!this._warned) { this.log('presence helper not found; meeting detection is off'); this._warned = true; }
       return;
     }
-    const p = spawn(this.helperPath, [], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // the Windows helper is told our process id so it can stop when we do; the Mac one notices by itself
+    const args = process.platform === 'win32' ? [String(process.pid)] : [];
+    const p = spawn(this.helperPath, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     this._proc = p;
     let buf = '';
     p.stdout.on('data', d => {
@@ -60,6 +62,7 @@ class PresenceWatcher extends EventEmitter {
         } catch (e) { /* ignore partial lines */ }
       }
     });
+    p.on('error', e => this.log('presence helper failed to start:', e.message));
     p.on('exit', () => {
       this._proc = null; this.helperOk = false;
       this._set({ cameraInUse: false, micInUse: false, fullscreen: false, screenShared: false });
@@ -83,9 +86,11 @@ class PresenceWatcher extends EventEmitter {
 }
 
 function helperPath(app) {
+  const win = process.platform === 'win32';
+  const file = win ? 'titli-presence.exe' : 'titli-presence';
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'bin', 'titli-presence')
-    : path.join(__dirname, '../../native/mac/bin/titli-presence');
+    ? path.join(process.resourcesPath, 'bin', file)
+    : path.join(__dirname, '../../native', win ? 'win' : 'mac', 'bin', file);
 }
 
 module.exports = { PresenceWatcher, helperPath };

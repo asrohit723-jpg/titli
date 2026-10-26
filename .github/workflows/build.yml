@@ -17,16 +17,13 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  # macOS minutes are expensive on private repos, so the app is built only for tags (v0.1.0) or on demand
+  # Mac and Windows minutes are expensive on private repos, so the apps are built only for tags or on demand
   mac:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     permissions:
       contents: write   # to attach the .dmg to a tag's release
-    env:
-      CAN_SIGN_UPDATES: ${{ secrets.UPDATE_SIGNING_KEY != '' }}
-      CAN_PUBLISH: ${{ secrets.RELEASES_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,8 +36,6 @@ jobs:
           V="$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}"
           npm pkg set version="$V"
           echo "VERSION=$V" >> "$GITHUB_ENV"
-          { echo 'NOTES<<NOTES_END'; git log -1 --format=%s; echo 'NOTES_END'; } >> "$GITHUB_ENV"
-          echo "Building Titli $V"
 
       - name: Build the presence helper
         run: npm run build:helper
@@ -48,7 +43,7 @@ jobs:
         run: TITLI_SMOKE_OUT="$PWD/dist/smoke" npx electron scripts/smoke.js
         timeout-minutes: 3
 
-      # one build for Apple Silicon and one for Intel: each about half the size of a universal app
+      # one build for Apple Silicon and one for Intel, each about half the size of a universal app
       - name: Build the app
         run: |
           set -o pipefail
@@ -81,20 +76,116 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$X64_APP" "dist/Titli-$VERSION-x64-mac.zip"
           ls -lh dist/*.zip
 
-      - name: Sign the update manifest
-        if: env.CAN_SIGN_UPDATES == 'true'
-        run: node scripts/make-manifest.js
-        env:
-          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
-
       - uses: actions/upload-artifact@v4
         with:
           name: Titli-mac-${{ env.VERSION }}
           path: |
             dist/*.dmg
+            dist/*.zip
             dist/smoke/*.png
 
-      # the public repo the app updates from (the code itself stays private)
+      - name: Attach to this repo's release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+
+  windows:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+
+      - name: Set the version
+        run: |
+          V="$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}"
+          npm pkg set version="$V"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: Build the presence helper
+        run: npm run build:helper
+      - name: Check the presence helper answers
+        run: |
+          out="$(native/win/bin/titli-presence.exe --once)"
+          echo "$out"
+          node -e "const j=JSON.parse(process.argv[1]); if (!('camera' in j && 'mic' in j && 'fullscreen' in j)) process.exit(1)" "$out"
+
+      - name: Smoke test
+        id: smoke
+        continue-on-error: true
+        run: TITLI_SMOKE_OUT="$(pwd -W)/dist/smoke" npx electron scripts/smoke.js
+        timeout-minutes: 3
+
+      - name: Build the installer
+        run: |
+          set -o pipefail
+          if ! npx electron-builder --win --x64 --publish never 2>&1 | tee builder.log; then
+            msg="$(tail -n 40 builder.log | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            echo "::error title=electron-builder failed::$msg"
+            exit 1
+          fi
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Check the installer
+        run: |
+          test -f "dist/Titli-Setup-$VERSION-x64.exe"
+          test -f dist/win-unpacked/resources/bin/titli-presence.exe
+          ls -l dist/*.exe
+          if [ "${{ steps.smoke.outcome }}" != "success" ]; then echo "::warning::The Windows smoke test didn't pass on the build machine. The installer was still built."; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Titli-windows-${{ env.VERSION }}
+          path: |
+            dist/*.exe
+            dist/smoke/*.png
+
+  # signs the update manifests and publishes everything to the public repo the apps update from
+  publish:
+    needs: [mac, windows]
+    if: always() && needs.mac.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      CAN_SIGN_UPDATES: ${{ secrets.UPDATE_SIGNING_KEY != '' }}
+      CAN_PUBLISH: ${{ secrets.RELEASES_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - name: Set the version
+        run: |
+          V="$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          { echo 'NOTES<<NOTES_END'; git log -1 --format=%s; echo 'NOTES_END'; } >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Titli-*-${{ env.VERSION }}
+          path: dist
+          merge-multiple: true
+
+      - name: Sign the update manifests
+        if: env.CAN_SIGN_UPDATES == 'true'
+        run: |
+          ls -l dist
+          node scripts/make-manifest.js mac
+          if [ -f "dist/Titli-Setup-$VERSION-x64.exe" ]; then
+            node scripts/make-manifest.js win
+          else
+            echo "::warning::The Windows build didn't finish, so only the Mac update is published this time."
+          fi
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+
       - name: Publish to titli-releases
         if: env.CAN_PUBLISH == 'true' && env.CAN_SIGN_UPDATES == 'true'
         uses: softprops/action-gh-release@v2
@@ -108,14 +199,9 @@ jobs:
           files: |
             dist/*.dmg
             dist/*.zip
-            dist/latest-mac.json
+            dist/*.exe
+            dist/latest-*.json
 
       - name: Say what's missing
         if: env.CAN_PUBLISH != 'true' || env.CAN_SIGN_UPDATES != 'true'
-        run: echo "::warning::Built Titli $VERSION but didn't publish an update. Add the RELEASES_TOKEN and UPDATE_SIGNING_KEY secrets (see README, In-app updates)."
-
-      - name: Attach to this repo's release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.dmg
+        run: echo "::warning::Built Titli $VERSION but didn't publish it. Add the RELEASES_TOKEN and UPDATE_SIGNING_KEY secrets (see README, In-app updates)."

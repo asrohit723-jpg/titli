@@ -3,3 +3,4 @@ dist/
 native/mac/bin/
 .DS_Store
 *.log
+native/win/bin/
