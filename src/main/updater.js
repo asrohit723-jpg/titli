@@ -94,10 +94,26 @@ class Updater extends EventEmitter {
   start() {
     if (!app.isPackaged || !PUBLIC_KEY) return;
     sweepOldDownloads();
+    this._reportFailedSwap();
     setTimeout(() => this.check(), 20000);
     this._timer = setInterval(() => this.check(), CHECK_EVERY);
   }
   stop() { clearInterval(this._timer); }
+
+  // the swap happens after we quit; if the last thing it logged was a failure, say so once we're back
+  _reportFailedSwap() {
+    let last = '';
+    try { last = fs.readFileSync(LOG_FILE(), 'utf8').trim().split('\n').pop() || ''; } catch (e) { return; }
+    if (!/SWAP FAILED/.test(last)) return;
+    const blocked = /not permitted/i.test(last);
+    this._set({
+      error: blocked
+        ? 'macOS stopped Titli from replacing itself. Allow Titli in System Settings → Privacy & Security → App Management, then update again.'
+        : 'The last update couldn’t replace Titli, so you still have this version. Try again.',
+      errorDetail: last
+    });
+    logToFile('reported the failed swap');
+  }
 
   // a quiet check when the panel opens, at most once an hour
   maybeCheck() { if (Date.now() - this.state.checkedAt > 3600 * 1000) this.check(); }
@@ -181,10 +197,12 @@ class Updater extends EventEmitter {
         return { ok: true };
       }
 
-      // 2. unpack and check it's the Titli we were promised
+      // 2. unpack and check it's the Titli we were promised. Unpack under a name that isn't an app yet
+      //    (Titli.update) and rename it at the end: recent macOS can refuse to create the symlinks inside
+      //    a half-unpacked .app ("Operation not permitted"). ditto is the fallback.
       const unpacked = path.join(dir, 'new');
-      await run('/usr/bin/ditto', ['-x', '-k', file, unpacked], 'Couldn’t unpack the update.');
       const fresh = path.join(unpacked, 'Titli.app');
+      await unpack(file, unpacked, fresh);
       const plist = path.join(fresh, 'Contents', 'Info.plist');
       let id = null, ver = null;
       try { id = plistValue(plist, 'CFBundleIdentifier'); ver = plistValue(plist, 'CFBundleShortVersionString'); }
@@ -194,16 +212,19 @@ class Updater extends EventEmitter {
       await run('/usr/bin/codesign', ['--verify', '--deep', fresh], 'The new version’s signature didn’t check out, so it wasn’t installed.');
 
       // 3. once we've quit: move the old app aside, put the new one in place, reopen. Put the old one back if anything fails.
+      //    The outcome goes in the log, so if the swap fails the next launch can say why.
       const swap = [
-        'APP="$1"; NEW="$2"; PID="$3"; TMP="$4"; OLD="$APP.old-$$"',
+        'APP="$1"; NEW="$2"; PID="$3"; TMP="$4"; LOG="$5"; OLD="$APP.old-$$"',
+        'stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }',
         'i=0; while kill -0 "$PID" 2>/dev/null && [ $i -lt 150 ]; do sleep 0.2; i=$((i+1)); done',
-        'if mv "$APP" "$OLD"; then',
-        '  if mv "$NEW" "$APP"; then rm -rf "$OLD"; else mv "$OLD" "$APP"; fi',
-        'fi',
+        'if err="$(mv "$APP" "$OLD" 2>&1)"; then',
+        '  if err="$(mv "$NEW" "$APP" 2>&1)"; then rm -rf "$OLD"; echo "$(stamp) swapped in the new version" >> "$LOG"',
+        '  else mv "$OLD" "$APP"; echo "$(stamp) SWAP FAILED putting the new version in place: $err" >> "$LOG"; fi',
+        'else echo "$(stamp) SWAP FAILED moving the old version aside: $err" >> "$LOG"; fi',
         'open "$APP"',
         'rm -rf "$TMP"'
       ].join('\n');
-      spawn('/bin/sh', ['-c', swap, 'titli-update', target.bundle, fresh, String(process.pid), dir], { detached: true, stdio: 'ignore' }).unref();
+      spawn('/bin/sh', ['-c', swap, 'titli-update', target.bundle, fresh, String(process.pid), dir, LOG_FILE()], { detached: true, stdio: 'ignore' }).unref();
       this.log('update ready, restarting into', m.version);
       logToFile(`verified ${m.version}, swapping ${target.bundle} and reopening`);
       setTimeout(() => app.quit(), 300);
@@ -217,6 +238,21 @@ class Updater extends EventEmitter {
       return { ok: false, error: friendly(e) };
     }
   }
+}
+
+// bsdtar renames the top folder on the way out (Titli.app -> Titli.update); ditto can't, so it's the fallback
+async function unpack(zip, into, fresh) {
+  fs.mkdirSync(into, { recursive: true });
+  const staged = path.join(into, 'Titli.update');
+  try {
+    await run('/usr/bin/bsdtar', ['-x', '-f', zip, '-C', into, '-s', '/^Titli\\.app/Titli.update/S'], 'Couldn’t unpack the update.');
+    fs.renameSync(staged, fresh);
+    return;
+  } catch (e) {
+    logToFile(`bsdtar unpack failed, trying ditto: ${detailOf(e)}`);
+    fs.rmSync(into, { recursive: true, force: true });
+  }
+  await run('/usr/bin/ditto', ['-x', '-k', zip, into], 'Couldn’t unpack the update.');
 }
 
 // Where an update is downloaded and unpacked: Titli's own folder, by its real path.
