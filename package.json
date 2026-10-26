@@ -1,0 +1,47 @@
+{
+  "name": "titli",
+  "productName": "Titli",
+  "version": "0.1.0",
+  "description": "A tiny butterfly that carries a short note onto someone's screen.",
+  "main": "src/main/main.js",
+  "author": "Rohit",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --test test/*.test.js",
+    "build:helper": "bash native/mac/build.sh",
+    "dist": "npm run build:helper && electron-builder --mac --publish never",
+    "dist:dir": "npm run build:helper && electron-builder --mac --dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "app.titli.mac",
+    "productName": "Titli",
+    "copyright": "© 2026 Titli",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["src/**/*", "assets/**/*", "package.json"],
+    "extraResources": [{ "from": "native/mac/bin", "to": "bin", "filter": ["**/*"] }],
+    "mac": {
+      "category": "public.app-category.lifestyle",
+      "icon": "build/icon.png",
+      "target": [{ "target": "dmg", "arch": ["universal"] }, { "target": "zip", "arch": ["universal"] }],
+      "identity": null,
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSCameraUsageDescription": "Titli only checks whether your camera is already in use, so butterflies wait until your call is over. It never turns the camera on.",
+        "NSMicrophoneUsageDescription": "Titli only checks whether your microphone is already in use, so butterflies wait until your call is over. It never records."
+      }
+    },
+    "dmg": {
+      "title": "Titli",
+      "contents": [{ "x": 150, "y": 190 }, { "x": 390, "y": 190, "type": "link", "path": "/Applications" }],
+      "window": { "width": 540, "height": 380 }
+    }
+  }
+}
