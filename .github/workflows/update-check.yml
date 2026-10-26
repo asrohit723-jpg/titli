@@ -71,3 +71,49 @@ jobs:
             note error "Did not update (now $v, wanted $LATEST, running: ${running:-nothing})%0A$detail"
             exit 1
           fi
+
+  # closer to a real person's Mac: installed from the .dmg, still marked as downloaded, opened through Launch Services
+  e2e-open:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Build an older Titli (0.1.0) from this code, as a .dmg
+        run: |
+          npm run build:helper
+          npx electron-builder --mac --arm64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Install it from the .dmg like a person would
+        run: |
+          DMG="$(ls dist/*.dmg | head -1)"
+          xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;$(uuidgen)" "$DMG"
+          hdiutil attach -nobrowse -mountpoint /tmp/titli-dmg "$DMG"
+          ditto /tmp/titli-dmg/Titli.app /Applications/Titli.app
+          hdiutil detach /tmp/titli-dmg
+          xattr -l /Applications/Titli.app || true
+          # stand in for "Open Anyway" (there's no one to click it here)
+          sudo spctl --global-disable 2>/dev/null || sudo spctl --master-disable || true
+      - name: Open it and let it update itself
+        run: |
+          note() { msg="$(printf '%s' "$2" | tail -n 40 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; echo "::$1::$msg"; }
+          LATEST="$(curl -sSL https://github.com/asrohit723-jpg/titli-releases/releases/latest/download/latest-mac.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+          open --env TITLI_TEST_UPDATE=1 --stdout "$PWD/app.log" --stderr "$PWD/app.log" /Applications/Titli.app
+          v=""
+          for i in $(seq 1 90); do
+            v="$(plutil -extract CFBundleShortVersionString raw -o - /Applications/Titli.app/Contents/Info.plist 2>/dev/null)"
+            [ "$v" = "$LATEST" ] && break
+            grep -q 'update failed' "$HOME/Library/Logs/Titli/updates.log" 2>/dev/null && break
+            sleep 2
+          done
+          sleep 8
+          running="$(pgrep -fl 'Titli.app/Contents/MacOS/Titli$' || true)"
+          detail="$(grep '\[titli\]' app.log | tail -15; echo '--- updates.log'; cat "$HOME/Library/Logs/Titli/updates.log" 2>/dev/null; echo '--- zip xattrs'; xattr -l "$TMPDIR"/titli-update-*/*.zip 2>/dev/null | head; ls -la "$TMPDIR" | grep titli)"
+          if [ "$v" = "$LATEST" ] && [ -n "$running" ]; then
+            note notice "Updated itself 0.1.0 -> $v and reopened ($running)%0A$detail"
+          else
+            note error "Did not update (now $v, wanted $LATEST, running: ${running:-nothing})%0A$detail"
+            exit 1
+          fi
