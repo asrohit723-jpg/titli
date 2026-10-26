@@ -137,7 +137,9 @@ class Updater extends EventEmitter {
     const target = installTarget();
     if (target.error) { this._set({ error: target.error, errorDetail: `install target: ${app.getPath('exe')}` }); return { ok: false, error: target.error }; }
     const m = this.manifest, b = m.builds[process.arch];
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-update-'));
+    let dir;
+    try { dir = workDir(); }
+    catch (e) { this._set({ error: 'Titli couldn’t make a folder for the update.', errorDetail: detailOf(e) }); return { ok: false }; }
     let out = null, reader = null;
     const cleanup = () => {
       try { if (out) out.destroy(); } catch (e) { /* already closed */ }
@@ -217,16 +219,27 @@ class Updater extends EventEmitter {
   }
 }
 
+// Where an update is downloaded and unpacked: Titli's own folder, by its real path.
+// Not the system temp folder: on macOS 15 its path goes through a symlink (/var -> /private/var),
+// and ditto then refuses to create the app's own symlinks there ("Operation not permitted").
+function updatesRoot() { return path.join(app.getPath('userData'), 'updates'); }
+function workDir() {
+  fs.mkdirSync(updatesRoot(), { recursive: true });
+  return fs.mkdtempSync(path.join(fs.realpathSync(updatesRoot()), 'titli-update-'));
+}
+
 // downloads left behind by earlier updates (a Windows installer can't delete the folder it ran from)
 function sweepOldDownloads() {
-  fs.readdir(os.tmpdir(), (err, names) => {
-    if (err) return;
-    for (const n of names) {
-      if (!n.startsWith('titli-update-')) continue;
-      const p = path.join(os.tmpdir(), n);
-      fs.stat(p, (e, st) => { if (!e && Date.now() - st.mtimeMs > 3600 * 1000) fs.rm(p, { recursive: true, force: true }, () => {}); });
-    }
-  });
+  for (const root of [updatesRoot(), os.tmpdir()]) {
+    fs.readdir(root, (err, names) => {
+      if (err) return;
+      for (const n of names) {
+        if (!n.startsWith('titli-update-')) continue;
+        const p = path.join(root, n);
+        fs.stat(p, (e, st) => { if (!e && Date.now() - st.mtimeMs > 3600 * 1000) fs.rm(p, { recursive: true, force: true }, () => {}); });
+      }
+    });
+  }
 }
 
 module.exports = { Updater, installTarget, currentBundle };
