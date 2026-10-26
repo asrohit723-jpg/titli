@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:">
+<title>Titli</title>
+<link rel="stylesheet" href="../shared/base.css">
+<link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="bfly" viewBox="0 0 40 34">
+      <g style="fill:var(--mark-fill);stroke:var(--mark-ink)" stroke-width="1.1" stroke-linejoin="round">
+        <path d="M21 16 C 24 9, 30 3, 36.5 2 C 38.6 1.8, 39.4 3.6, 38.8 5.8 C 38 9.5, 37.6 12, 36.6 14.8 C 32.5 16.4, 26 17, 21 16 Z"/>
+        <path d="M19 16 C 16 9, 10 3, 3.5 2 C 1.4 1.8, .6 3.6, 1.2 5.8 C 2 9.5, 2.4 12, 3.4 14.8 C 7.5 16.4, 14 17, 19 16 Z"/>
+        <path d="M21 17.4 C 26 17, 31.6 18, 32.8 21 C 33.8 23.8, 30.4 25.8, 27.4 26.8 L 26.8 31.6 C 26.6 32.6, 25.2 32.6, 25.1 31.6 L 24.7 27.4 C 22.8 26.4, 21.4 22, 21 17.4 Z"/>
+        <path d="M19 17.4 C 14 17, 8.4 18, 7.2 21 C 6.2 23.8, 9.6 25.8, 12.6 26.8 L 13.2 31.6 C 13.4 32.6, 14.8 32.6, 14.9 31.6 L 15.3 27.4 C 17.2 26.4, 18.6 22, 19 17.4 Z"/>
+      </g>
+      <g style="fill:var(--mark-rose)"><circle cx="26.6" cy="12.6" r="2.7"/><circle cx="13.4" cy="12.6" r="2.7"/><circle cx="25.4" cy="21.6" r="1.9"/><circle cx="14.6" cy="21.6" r="1.9"/></g>
+      <ellipse cx="20" cy="19" rx="1.1" ry="7.4" style="fill:var(--mark-ink)"/>
+      <path d="M19.6 12 Q 17.6 6.4 15.4 4.4 M20.4 12 Q 22.4 6.4 24.6 4.4" style="stroke:var(--mark-ink)" stroke-width=".8" fill="none" stroke-linecap="round"/>
+    </symbol>
+  </defs>
+</svg>
+
+<canvas class="gl" id="gl"></canvas>
+<div class="gl-fail" id="glFail" hidden>Titli couldn't start its butterfly on this Mac.</div>
+
+<div class="bubble" id="bubble" role="dialog" aria-label="Note" hidden>
+  <div class="b-head">
+    <span class="b-from" id="bFrom"></span>
+    <button type="button" class="b-close" id="closeBtn" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+  </div>
+  <p class="b-note" id="bNote"></p>
+  <div class="b-react" id="bReact" role="group" aria-label="React">
+    <button type="button" class="b-emo" data-r="❤️" aria-label="Love">❤️</button>
+    <button type="button" class="b-emo" data-r="🥰" aria-label="Aww">🥰</button>
+    <button type="button" class="b-emo" data-r="😘" aria-label="Kiss">😘</button>
+    <button type="button" class="b-emo" data-r="🤗" aria-label="Hug">🤗</button>
+    <button type="button" class="b-emo" data-r="😊" aria-label="Smile">😊</button>
+    <button type="button" class="b-back" id="backBtn" aria-label="Send a butterfly back" title="Send a butterfly back"><svg viewBox="0 0 40 34" aria-hidden="true"><use href="#bfly"/></svg></button>
+  </div>
+</div>
+
+<script src="../vendor/three.min.js"></script>
+<script src="overlay.js"></script>
+</body>
+</html>

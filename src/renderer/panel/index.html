@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:">
+<title>Titli</title>
+<link rel="stylesheet" href="../shared/base.css">
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="bfly" viewBox="0 0 40 34">
+      <g style="fill:var(--mark-fill);stroke:var(--mark-ink)" stroke-width="1.1" stroke-linejoin="round">
+        <path d="M21 16 C 24 9, 30 3, 36.5 2 C 38.6 1.8, 39.4 3.6, 38.8 5.8 C 38 9.5, 37.6 12, 36.6 14.8 C 32.5 16.4, 26 17, 21 16 Z"/>
+        <path d="M19 16 C 16 9, 10 3, 3.5 2 C 1.4 1.8, .6 3.6, 1.2 5.8 C 2 9.5, 2.4 12, 3.4 14.8 C 7.5 16.4, 14 17, 19 16 Z"/>
+        <path d="M21 17.4 C 26 17, 31.6 18, 32.8 21 C 33.8 23.8, 30.4 25.8, 27.4 26.8 L 26.8 31.6 C 26.6 32.6, 25.2 32.6, 25.1 31.6 L 24.7 27.4 C 22.8 26.4, 21.4 22, 21 17.4 Z"/>
+        <path d="M19 17.4 C 14 17, 8.4 18, 7.2 21 C 6.2 23.8, 9.6 25.8, 12.6 26.8 L 13.2 31.6 C 13.4 32.6, 14.8 32.6, 14.9 31.6 L 15.3 27.4 C 17.2 26.4, 18.6 22, 19 17.4 Z"/>
+      </g>
+      <g style="stroke:var(--mark-ink)" stroke-width=".7" fill="none" stroke-linecap="round"><path d="M21 16 L 33 5.5 M21 16 L 36.6 9.6 M21 16 L 35.6 14.4 M19 16 L 7 5.5 M19 16 L 3.4 9.6 M19 16 L 4.4 14.4 M21 17.4 L 30.6 22.6 M19 17.4 L 9.4 22.6"/></g>
+      <g style="fill:var(--mark-rose)"><circle cx="26.6" cy="12.6" r="2.7"/><circle cx="13.4" cy="12.6" r="2.7"/><circle cx="25.4" cy="21.6" r="1.9"/><circle cx="14.6" cy="21.6" r="1.9"/></g>
+      <ellipse cx="20" cy="19" rx="1.1" ry="7.4" style="fill:var(--mark-ink)"/>
+      <path d="M19.6 12 Q 17.6 6.4 15.4 4.4 M20.4 12 Q 22.4 6.4 24.6 4.4" style="stroke:var(--mark-ink)" stroke-width=".8" fill="none" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="heartSym" viewBox="0 0 24 24"><path d="M12 21s-7.4-4.5-9.5-9.1C1 8.4 3.1 4.6 6.8 4.6c2.1 0 3.5 1.1 4.2 2.4.7-1.3 2.1-2.4 4.2-2.4 3.7 0 5.8 3.8 4.3 7.3C19.4 16.5 12 21 12 21z"/></symbol>
+    <symbol id="xSym" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <header class="head">
+    <svg class="mark" viewBox="0 0 40 34" aria-hidden="true"><use href="#bfly"/></svg>
+    <div class="head-text">
+      <span class="wordmark">Titli</span>
+      <span class="status" id="status"></span>
+    </div>
+    <button type="button" class="icon-btn" id="closePanel" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#xSym"/></svg></button>
+  </header>
+
+  <!-- first run -->
+  <section class="onboard" id="onboard" hidden>
+    <h1>Hello. What should people see as your name?</h1>
+    <p class="helper">It shows on every butterfly you send.</p>
+    <div class="row"><input type="text" id="obName" maxlength="24" placeholder="Rohit" autocomplete="off"><button type="button" class="btn primary" id="obSave">Continue</button></div>
+    <p class="err" id="obErr" role="alert" hidden></p>
+  </section>
+
+  <div class="main" id="main" hidden>
+    <div class="tabs" role="tablist" aria-label="Titli">
+      <button type="button" class="tab" role="tab" id="t-send" data-tab="send" aria-controls="tab-send">Send</button>
+      <button type="button" class="tab" role="tab" id="t-schedule" data-tab="schedule" aria-controls="tab-schedule">Schedule</button>
+      <button type="button" class="tab" role="tab" id="t-people" data-tab="people" aria-controls="tab-people">People</button>
+      <button type="button" class="tab" role="tab" id="t-settings" data-tab="settings" aria-controls="tab-settings">Settings</button>
+    </div>
+
+    <p class="toast" id="toast" role="status" aria-live="polite" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#heartSym"/></svg><span id="toastText"></span></p>
+
+    <div class="scroll">
+      <!-- Send -->
+      <section class="tabpanel" id="tab-send" role="tabpanel" aria-labelledby="t-send">
+        <div class="empty-pair" id="noPeople" hidden>
+          <p><b>Pair with someone first.</b> Make an invite code and send it to them, or enter the code they sent you.</p>
+          <button type="button" class="btn primary" data-goto="people">Pair with someone</button>
+        </div>
+        <div id="sendArea">
+          <div class="field">
+            <span class="lbl">To</span>
+            <div class="to-chips" id="toChips" role="group" aria-label="Who to send to"></div>
+          </div>
+          <button type="button" class="heart-btn" id="heartBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#heartSym"/></svg>Send a heart</button>
+          <div class="field">
+            <div class="row-head"><span class="lbl">Quick notes</span><span class="helper">Tap one, or press its number</span></div>
+            <div class="qn-grid" id="qnGrid"></div>
+          </div>
+          <div class="field">
+            <label class="lbl" for="newNote">A short note</label>
+            <div class="compose"><input type="text" id="newNote" maxlength="60" placeholder="Come home soon" autocomplete="off"><span class="counter" id="count">0/60</span></div>
+            <div class="row">
+              <button type="button" class="btn primary" id="sendNew">Send</button>
+              <button type="button" class="btn" id="saveNew">Save as quick note</button>
+            </div>
+            <p class="err" id="sendErr" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <span class="lbl">Wings</span>
+            <div class="swatches" role="group" aria-label="Wing style">
+              <button type="button" class="sw" data-style="rose" aria-label="Blush Rose" title="Blush Rose" style="--ring:#8A3A58;background:radial-gradient(circle at 50% 50%,#E8718F 0 30%,#FFEDEA 32%)"></button>
+              <button type="button" class="sw" data-style="peony" aria-label="Blush Peony" title="Blush Peony" style="--ring:#B06A8A;background:radial-gradient(circle at 50% 50%,#F4A3BE 0 30%,#FFF2F6 32%)"></button>
+              <button type="button" class="sw" data-style="gold" aria-label="Gold Leaf" title="Gold Leaf" style="--ring:#B8862E;background:radial-gradient(circle at 50% 50%,#E8718F 0 30%,#FFF2DC 32%)"></button>
+              <button type="button" class="sw" data-style="midnight" aria-label="Midnight" title="Midnight" style="--ring:#E6C98A;background:radial-gradient(circle at 50% 50%,#E85C7C 0 30%,#1A1424 32%)"></button>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <div class="row-head">
+            <span class="lbl">Recent</span>
+            <div class="mini-seg" role="group" aria-label="Show">
+              <button type="button" data-list="sent" aria-pressed="true">Sent</button>
+              <button type="button" data-list="received" aria-pressed="false">Received</button>
+            </div>
+          </div>
+          <ul class="list" id="recent"></ul>
+        </div>
+      </section>
+
+      <!-- Schedule -->
+      <section class="tabpanel" id="tab-schedule" role="tabpanel" aria-labelledby="t-schedule" hidden>
+        <p class="next-up" id="nextUp"></p>
+        <div class="sched-form">
+          <div class="field full">
+            <label class="lbl" for="schedNote">Note</label>
+            <select id="schedNote"></select>
+            <input type="text" id="schedCustom" maxlength="60" placeholder="Time to stretch" autocomplete="off" hidden>
+          </div>
+          <div class="field">
+            <label class="lbl" for="schedTo">To</label>
+            <select id="schedTo"></select>
+          </div>
+          <div class="field">
+            <label class="lbl" for="schedTime">Time</label>
+            <input type="time" id="schedTime" value="11:00">
+          </div>
+          <div class="field full">
+            <span class="lbl">Repeat</span>
+            <div class="seg3" role="group" aria-label="Repeat">
+              <button type="button" data-r="once" aria-pressed="false">Once</button>
+              <button type="button" data-r="daily" aria-pressed="true">Every day</button>
+              <button type="button" data-r="weekdays" aria-pressed="false">Weekdays</button>
+            </div>
+          </div>
+          <div class="full"><button type="button" class="btn primary" id="addSched">Add to schedule</button></div>
+          <p class="err full" id="schedErr" role="alert" hidden></p>
+        </div>
+        <div class="field">
+          <span class="lbl">Scheduled</span>
+          <ul class="list" id="schedList"></ul>
+          <p class="helper">If they're on a call at that time, the butterfly waits and lands when they're free. If your laptop is asleep at that time, it goes when it wakes, up to an hour late.</p>
+        </div>
+      </section>
+
+      <!-- People -->
+      <section class="tabpanel" id="tab-people" role="tabpanel" aria-labelledby="t-people" hidden>
+        <div class="field">
+          <span class="lbl">Invite someone</span>
+          <ul class="list codes" id="inviteList"></ul>
+          <div class="row"><button type="button" class="btn primary" id="newInvite">Make an invite code</button></div>
+          <p class="helper">Send the code to them. It works once, for one person, and expires in 24 hours.</p>
+        </div>
+        <div class="field">
+          <label class="lbl" for="joinCode">Got a code?</label>
+          <div class="row"><input type="text" id="joinCode" placeholder="P7QM-2XPA-9DRT-4HWN" maxlength="24" autocomplete="off" spellcheck="false" class="mono"><button type="button" class="btn primary" id="joinBtn">Join</button></div>
+          <ul class="list" id="joiningList"></ul>
+          <p class="err" id="peopleErr" role="alert" hidden></p>
+        </div>
+        <div class="field">
+          <span class="lbl">Your people</span>
+          <ul class="list" id="conns"></ul>
+        </div>
+        <div class="field">
+          <label class="lbl" for="groupName">New group</label>
+          <div class="row"><input type="text" id="groupName" placeholder="Family" maxlength="24" autocomplete="off"><button type="button" class="btn" id="groupBtn">Create</button></div>
+          <p class="helper">Everyone in a group gets the butterfly when you send to it. Share the group's code so people can join.</p>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section class="tabpanel" id="tab-settings" role="tabpanel" aria-labelledby="t-settings" hidden>
+        <div class="field">
+          <label class="lbl" for="myName">Your name</label>
+          <div class="row"><input type="text" id="myName" maxlength="24" autocomplete="off"><button type="button" class="btn" id="saveName">Save</button></div>
+        </div>
+        <div class="field">
+          <span class="lbl">When butterflies land</span>
+          <label class="switch-row"><span class="st"><b>Wait while I'm on a call</b><small id="helperNote">Camera or mic in use, or something full screen</small></span><span class="switch"><input type="checkbox" id="setMeetings"><span class="track"></span></span></label>
+          <label class="switch-row"><span class="st"><b>Wait while I'm away</b><small>No typing or mouse for 2 minutes, or the screen is locked</small></span><span class="switch"><input type="checkbox" id="setAway"><span class="track"></span></span></label>
+          <label class="switch-row"><span class="st"><b>Tell me about reactions</b><small>A quiet notification when someone reacts</small></span><span class="switch"><input type="checkbox" id="setNotify"><span class="track"></span></span></label>
+          <label class="switch-row"><span class="st"><b>Open Titli when I log in</b><small>So nothing waits for you to start it</small></span><span class="switch"><input type="checkbox" id="setLogin"><span class="track"></span></span></label>
+        </div>
+        <div class="field">
+          <span class="lbl">Filming</span>
+          <label class="switch-row"><span class="st"><b>Let screen recordings see butterflies</b><small>Off by default, so they never show up when you share your screen. Turn it on only while you film.</small></span><span class="switch"><input type="checkbox" id="setCapture"><span class="track"></span></span></label>
+          <div class="row"><button type="button" class="btn" id="previewBtn">Show a butterfly on my screen</button></div>
+        </div>
+        <div class="field">
+          <label class="lbl" for="relayUrl">Relay</label>
+          <div class="row"><input type="text" id="relayUrl" autocomplete="off" spellcheck="false" class="mono"><button type="button" class="btn" id="saveRelay">Save</button></div>
+          <p class="helper">Butterflies travel through this relay, encrypted on your laptop so the relay can't read them. Everyone you're paired with must use the same relay.</p>
+          <p class="err" id="settingsErr" role="alert" hidden></p>
+        </div>
+        <div class="row foot"><span class="helper" id="version"></span><button type="button" class="btn" id="quitBtn">Quit Titli</button></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="panel.js"></script>
+</body>
+</html>

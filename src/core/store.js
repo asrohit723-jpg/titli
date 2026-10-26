@@ -17,6 +17,7 @@ function defaults() {
       holdWhenAway: true,
       notifyReactions: true,
       openAtLogin: true,
+      allowCapture: false,  // let screen recordings see butterflies (for filming)
       style: 'rose'
     },
     circles: [],     // people you're paired with, and groups

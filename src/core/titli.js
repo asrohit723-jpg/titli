@@ -74,7 +74,7 @@ class TitliCore extends EventEmitter {
 
   setSettings(patch = {}) {
     const st = this.s.settings;
-    for (const k of ['holdInMeetings', 'holdWhenAway', 'notifyReactions', 'openAtLogin']) if (typeof patch[k] === 'boolean') st[k] = patch[k];
+    for (const k of ['holdInMeetings', 'holdWhenAway', 'notifyReactions', 'openAtLogin', 'allowCapture']) if (typeof patch[k] === 'boolean') st[k] = patch[k];
     if (STYLES.includes(patch.style)) st.style = patch.style;
     if (typeof patch.relay === 'string') {
       const url = patch.relay.trim().replace(/\/+$/, '');
