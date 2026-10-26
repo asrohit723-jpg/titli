@@ -268,7 +268,7 @@ kbd{font-family:var(--font-body)}
 .update-row .btn{flex:none}
 .progress{height:4px; margin:0 14px 14px; border-radius:2px; background:var(--surface-2); overflow:hidden}
 .progress span{display:block; height:100%; width:0; background:var(--accent); transition:width .2s}
-.up-err{padding:0 14px 14px}
+.up-err{display:flex; flex-direction:column; align-items:flex-start; gap:4px; padding:0 14px 12px}
 .foot{display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:14px; border-top:1px solid var(--line)}
 
 .seg{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:2px; padding:3px; background:var(--surface); border-radius:12px}

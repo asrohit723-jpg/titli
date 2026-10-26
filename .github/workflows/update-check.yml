@@ -1,12 +1,14 @@
 name: Update check
 
-# Runs the Mac updater's steps against the published update, the same way the app does,
-# and reports each step. For diagnosing "the update didn't work".
+# Proves one-click updates work on a real Mac:
+#   steps: repeats the updater's checks by hand against the published update
+#   e2e:   installs an older Titli (built from this code) in /Applications, marked as downloaded,
+#          lets it update itself from the live release, and checks the new version is in place and running
 on:
   workflow_dispatch:
 
 jobs:
-  mac:
+  steps:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -18,23 +20,54 @@ jobs:
           note() { msg="$(printf '%s' "$2" | tail -n 30 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; echo "::$1::$msg"; }
           R=https://github.com/asrohit723-jpg/titli-releases/releases
           curl -sSL -o latest-mac.json "$R/latest/download/latest-mac.json"
-          node -e "const {verifyManifest}=require('./src/core/update-manifest');const fs=require('fs');const m=verifyManifest(fs.readFileSync('latest-mac.json','utf8'),fs.readFileSync('src/main/update-key.pem','utf8'));fs.writeFileSync('m.env','V='+m.version+'\nF='+m.builds.arm64.file+'\nS='+m.builds.arm64.sha256+'\n')" || { note error "manifest check failed"; exit 1; }
-          . ./m.env
-          D="$(mktemp -d "$TMPDIR/titli-update-XXXXXX")"
-          curl -sSL -o "$D/$F" "$R/download/v$V/$F"
-          got="$(shasum -a 256 "$D/$F" | cut -d' ' -f1)"
-          [ "$got" = "$S" ] && note notice "1 download + sha256 OK ($F)" || { note error "sha256 mismatch"; exit 1; }
-          out="$(/usr/bin/ditto -x -k "$D/$F" "$D/new" 2>&1)"; rc=$?
-          note "$([ $rc = 0 ] && echo notice || echo error)" "2 ditto exit $rc: $out"
-          ls -la "$D/new" "$D/new/Titli.app/Contents" 2>&1 | head -20
-          P="$D/new/Titli.app/Contents/Info.plist"
-          out="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$P" 2>&1)"; rc=$?
-          note "$([ $rc = 0 ] && echo notice || echo error)" "3 plutil id exit $rc: $out"
-          out="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$P" 2>&1)"; rc=$?
-          note "$([ $rc = 0 ] && echo notice || echo error)" "4 plutil version exit $rc: $out"
-          out="$(/usr/bin/codesign --verify --deep --strict "$D/new/Titli.app" 2>&1)"; rc=$?
-          note "$([ $rc = 0 ] && echo notice || echo error)" "5 codesign verify exit $rc: $out"
-          out="$(/usr/bin/codesign --verify --deep --strict --verbose=4 "$D/new/Titli.app" 2>&1)"
-          note notice "5b codesign verbose: $out"
-          out="$(xattr -lr "$D/new/Titli.app" 2>&1 | head -20)"
-          note notice "6 xattrs: $out"
+          for arch in arm64 x64; do
+            node -e "const {verifyManifest}=require('./src/core/update-manifest');const fs=require('fs');const m=verifyManifest(fs.readFileSync('latest-mac.json','utf8'),fs.readFileSync('src/main/update-key.pem','utf8'));const b=m.builds['$arch'];fs.writeFileSync('m.env','V='+m.version+'\nF='+b.file+'\nS='+b.sha256+'\n')" || { note error "manifest check failed"; exit 1; }
+            . ./m.env
+            D="$(mktemp -d "$TMPDIR/titli-update-XXXXXX")"
+            curl -sSL -o "$D/$F" "$R/download/v$V/$F"
+            got="$(shasum -a 256 "$D/$F" | cut -d' ' -f1)"
+            [ "$got" = "$S" ] || { note error "$arch: sha256 mismatch"; exit 1; }
+            out="$(/usr/bin/ditto -x -k "$D/$F" "$D/new" 2>&1)"; a=$?
+            out2="$(/usr/bin/codesign --verify --deep "$D/new/Titli.app" 2>&1)"; c=$?
+            note "$([ $a$c = 00 ] && echo notice || echo error)" "$arch $V: download+sha OK, ditto $a $out, codesign $c $out2"
+          done
+
+  e2e:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Build an older Titli (0.1.0) from this code
+        run: |
+          npm run build:helper
+          npx electron-builder --mac --arm64 --dir --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Install it in Applications, marked as downloaded
+        run: |
+          ditto dist/mac-arm64/Titli.app /Applications/Titli.app
+          xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;$(uuidgen)" /Applications/Titli.app
+          codesign --verify --deep /Applications/Titli.app
+          echo "installed $(plutil -extract CFBundleShortVersionString raw -o - /Applications/Titli.app/Contents/Info.plist)"
+      - name: Let it update itself
+        run: |
+          note() { msg="$(printf '%s' "$2" | tail -n 40 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; echo "::$1::$msg"; }
+          LATEST="$(curl -sSL https://github.com/asrohit723-jpg/titli-releases/releases/latest/download/latest-mac.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+          TITLI_TEST_UPDATE=1 /Applications/Titli.app/Contents/MacOS/Titli > app.log 2>&1 &
+          v=""
+          for i in $(seq 1 90); do
+            v="$(plutil -extract CFBundleShortVersionString raw -o - /Applications/Titli.app/Contents/Info.plist 2>/dev/null)"
+            [ "$v" = "$LATEST" ] && break
+            sleep 2
+          done
+          sleep 10
+          running="$(pgrep -fl 'Titli.app/Contents/MacOS/Titli$' || true)"
+          detail="$(grep '\[titli\]' app.log | tail -15; echo '--- updates.log'; cat "$HOME/Library/Logs/Titli/updates.log" 2>/dev/null; echo '--- Applications'; ls /Applications | grep -i titli)"
+          if [ "$v" = "$LATEST" ] && [ -n "$running" ]; then
+            note notice "Updated itself 0.1.0 -> $v and reopened ($running)%0A$detail"
+          else
+            note error "Did not update (now $v, wanted $LATEST, running: ${running:-nothing})%0A$detail"
+            exit 1
+          fi

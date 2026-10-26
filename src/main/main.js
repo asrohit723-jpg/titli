@@ -30,7 +30,9 @@ if (MAC && app.dock) app.dock.hide();
 if (WIN) app.setAppUserModelId('app.titli.mac'); // matches the installer's shortcut, so notifications show
 
 let tray = null, panel = null, overlay = null, core = null, watcher = null, delivery = null, store = null, updater = null;
-const log = (...a) => { if (DEV) console.log('[titli]', ...a); };
+// TITLI_TEST_UPDATE=1: CI starts an older build, which updates itself straight away and logs to stdout
+const TEST_UPDATE = process.env.TITLI_TEST_UPDATE === '1';
+const log = (...a) => { if (DEV || TEST_UPDATE) console.log('[titli]', ...a); };
 
 app.on('second-instance', () => showPanel());
 app.on('window-all-closed', e => e.preventDefault()); // a menu-bar app keeps running
@@ -72,7 +74,8 @@ app.whenReady().then(() => {
   if (!shortcut) log('no global shortcut available');
   applyLoginItem();
 
-  if (!store.state.me.name) setTimeout(showPanel, 600); // first run: say hello
+  if (!store.state.me.name && !TEST_UPDATE) setTimeout(showPanel, 600); // first run: say hello
+  if (TEST_UPDATE) updater.check({ manual: true }).then(() => { log('test update: status', updater.state.status, updater.state.latest); return updater.update(); }).then(r => log('test update: result', JSON.stringify(r), updater.state.errorDetail || ''));
   if (process.env.TITLI_SMOKE) global.__titli = { panel, overlay, core, delivery, watcher, updater, showPanel, preview, store };
 });
 
@@ -214,7 +217,7 @@ function wireIpc() {
     if (!fromPanel(e)) return false;
     if (action === 'hide') panel.hide();
     else if (action === 'quit') app.quit();
-    else if (action === 'copy' && typeof arg === 'string' && arg.length < 200) clipboard.writeText(arg);
+    else if (action === 'copy' && typeof arg === 'string' && arg.length < 4000) clipboard.writeText(arg);
     else if (action === 'open' && typeof arg === 'string' && /^https:\/\/(github\.com|docs\.ntfy\.sh)\//.test(arg)) shell.openExternal(arg);
     else if (action === 'preview') preview(typeof arg === 'string' ? arg : null);
     else if (action === 'checkUpdate') updater.check({ manual: true });

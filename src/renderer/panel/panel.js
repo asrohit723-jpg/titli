@@ -214,14 +214,20 @@
     b.hidden = u.status === 'dev';
     $('#upProgress').hidden = !(u.status === 'downloading' || u.status === 'installing');
     $('#upBar').style.width = `${pct}%`;
-    const err = $('#upErr');
-    err.hidden = !u.error;
-    err.textContent = u.error || '';
+    $('#upErrBox').hidden = !u.error;
+    $('#upErr').textContent = u.error || '';
+    $('#upCopy').hidden = !u.errorDetail;
     if (u.error && u.error !== lastUpdateErr && view === 'main') toast(u.error);
     lastUpdateErr = u.error || null;
   }
   const startUpdate = () => { if (S && S.update && S.update.status === 'available') api.ui('installUpdate'); };
   $('#updatePill').addEventListener('click', startUpdate);
+  $('#upCopy').addEventListener('click', () => {
+    const u = S && S.update;
+    if (!u || !u.errorDetail) return;
+    api.ui('copy', `Titli ${u.current} → ${u.latest || '?'} (${S.platform || ''})\n${u.error}\n${u.errorDetail}`);
+    toast('Details copied');
+  });
   $('#upBtn').addEventListener('click', () => {
     const st = S && S.update && S.update.status;
     if (st === 'available') startUpdate(); else api.ui('checkUpdate');

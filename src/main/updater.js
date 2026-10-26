@@ -25,9 +25,29 @@ const BUNDLE_ID = 'app.titli.mac';
 const CHECK_EVERY = 6 * 3600 * 1000;
 const PUBLIC_KEY = (() => { try { return fs.readFileSync(path.join(__dirname, 'update-key.pem'), 'utf8'); } catch (e) { return null; } })();
 
-const run = (cmd, args) => new Promise((resolve, reject) => {
-  execFile(cmd, args, { timeout: 120000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => err ? reject(new Error(String(stderr || err.message).trim())) : resolve(String(stdout).trim()));
+// a failure with a short message for people and the full story for the log and "Copy details"
+class StepError extends Error {
+  constructor(message, detail) { super(message); this.detail = detail || message; }
+}
+
+const run = (cmd, args, failMessage) => new Promise((resolve, reject) => {
+  execFile(cmd, args, { timeout: 180000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+    if (!err) return resolve(String(stdout).trim());
+    reject(new StepError(failMessage, `${path.basename(cmd)} failed (${err.code != null ? err.code : err.signal}): ${String(stderr || err.message).trim()}`));
+  });
 });
+
+// reads one string value from an app's Info.plist (XML, as electron-builder writes it) without plutil
+function plistValue(file, key) {
+  const xml = fs.readFileSync(file, 'utf8');
+  const m = xml.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`));
+  return m ? m[1].trim() : null;
+}
+
+const LOG_FILE = () => path.join(app.getPath('logs'), 'updates.log');
+function logToFile(line) {
+  try { fs.mkdirSync(path.dirname(LOG_FILE()), { recursive: true }); fs.appendFileSync(LOG_FILE(), `${new Date().toISOString()} ${line}\n`); } catch (e) { /* best effort */ }
+}
 
 // /Applications/Titli.app/Contents/MacOS/Titli -> /Applications/Titli.app
 function currentBundle() {
@@ -53,8 +73,9 @@ function friendly(e) {
   const m = String(e && e.message || e);
   if (/ENOTFOUND|ECONN|ERR_INTERNET|ERR_NAME|ERR_NETWORK|ERR_CONNECTION|ETIMEDOUT|network/i.test(m)) return 'Couldn’t reach the internet. Try again in a moment.';
   if (/ENOSPC/.test(m)) return 'Your computer is out of space for the update.';
-  return m.length < 160 ? m : 'The update didn’t work. Try again.';
+  return m.length < 200 ? m : m.slice(0, 197) + '…';
 }
+const detailOf = e => String((e && (e.detail || e.stack || e.message)) || e).slice(0, 3000);
 
 class Updater extends EventEmitter {
   constructor({ log = () => {} } = {}) {
@@ -63,7 +84,7 @@ class Updater extends EventEmitter {
     this.manifest = null;
     this.state = {
       status: app.isPackaged ? 'idle' : 'dev',   // dev | idle | checking | uptodate | available | downloading | installing | error
-      current: app.getVersion(), latest: null, notes: null, size: 0, progress: 0, error: null, checkedAt: 0
+      current: app.getVersion(), latest: null, notes: null, size: 0, progress: 0, error: null, errorDetail: null, checkedAt: 0
     };
   }
 
@@ -86,7 +107,7 @@ class Updater extends EventEmitter {
     if (!PUBLIC_KEY) { this._set({ status: 'error', error: 'This build can’t check for updates.' }); return; }
     if (['checking', 'downloading', 'installing'].includes(this.state.status)) return;
     const before = this.state.status;
-    this._set({ status: 'checking', error: null });
+    this._set({ status: 'checking', error: null, errorDetail: null });
     try {
       const res = await net.fetch(FEED, { cache: 'no-store' });
       if (res.status === 404) { this._set({ status: 'uptodate', checkedAt: Date.now() }); return; } // nothing published yet
@@ -104,16 +125,17 @@ class Updater extends EventEmitter {
       this._set({ status: 'available', latest: m.version, notes: typeof m.notes === 'string' ? m.notes.slice(0, 140) : null, size: build.size, checkedAt: Date.now() });
       if (isNew) this.emit('available', m.version);
     } catch (e) {
-      this.log('update check failed:', e.message);
+      this.log('update check failed:', detailOf(e));
+      logToFile(`check failed: ${detailOf(e)}`);
       const back = this.manifest ? 'available' : (manual ? 'error' : (before === 'checking' ? 'idle' : before));
-      this._set({ status: back, error: manual ? friendly(e) : null, checkedAt: manual ? Date.now() : this.state.checkedAt });
+      this._set({ status: back, error: manual ? friendly(e) : null, errorDetail: manual ? detailOf(e) : null, checkedAt: manual ? Date.now() : this.state.checkedAt });
     }
   }
 
   async update() {
     if (this.state.status !== 'available' || !this.manifest) return { ok: false };
     const target = installTarget();
-    if (target.error) { this._set({ error: target.error }); return { ok: false, error: target.error }; }
+    if (target.error) { this._set({ error: target.error, errorDetail: `install target: ${app.getPath('exe')}` }); return { ok: false, error: target.error }; }
     const m = this.manifest, b = m.builds[process.arch];
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-update-'));
     let out = null, reader = null;
@@ -122,12 +144,13 @@ class Updater extends EventEmitter {
       try { if (reader) reader.cancel(); } catch (e) { /* already done */ }
       fs.rm(dir, { recursive: true, force: true }, () => {});
     };
-    this._set({ status: 'downloading', progress: 0, error: null });
+    this._set({ status: 'downloading', progress: 0, error: null, errorDetail: null });
+    logToFile(`updating ${app.getVersion()} -> ${m.version} (${process.platform} ${process.arch})`);
     try {
       // 1. download, hashing as we go
       const file = path.join(dir, b.file);
       const res = await net.fetch(`${RELEASES}/download/v${m.version}/${encodeURIComponent(b.file)}`, { cache: 'no-store' });
-      if (!res.ok || !res.body) throw new Error(`The download failed (${res.status}). Try again.`);
+      if (!res.ok || !res.body) throw new StepError(`The download failed (${res.status}). Try again.`, `download ${res.status} ${res.url}`);
       const hash = crypto.createHash('sha256');
       out = fs.createWriteStream(file);
       reader = res.body.getReader();
@@ -143,26 +166,30 @@ class Updater extends EventEmitter {
       }
       await new Promise((resolve, reject) => out.end(err => err ? reject(err) : resolve()));
       out = null; reader = null;
-      if (got !== b.size || hash.digest('hex') !== b.sha256) throw new Error('The download didn’t match what was published, so it wasn’t installed.');
+      const digest = hash.digest('hex');
+      if (got !== b.size || digest !== b.sha256) throw new StepError('The download didn’t match what was published, so it wasn’t installed.', `size ${got}/${b.size}, sha256 ${digest} vs ${b.sha256}`);
 
       this._set({ status: 'installing', progress: 1 });
       if (WIN) {
         // 2w. the installer (verified above) replaces Titli quietly and opens it again; we just get out of its way
         spawn(file, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
         this.log('installer started for', m.version);
+      logToFile(`verified ${m.version}, running the installer`);
         setTimeout(() => app.quit(), 300);
         return { ok: true };
       }
 
       // 2. unpack and check it's the Titli we were promised
       const unpacked = path.join(dir, 'new');
-      await run('/usr/bin/ditto', ['-x', '-k', file, unpacked]);
+      await run('/usr/bin/ditto', ['-x', '-k', file, unpacked], 'Couldn’t unpack the update.');
       const fresh = path.join(unpacked, 'Titli.app');
       const plist = path.join(fresh, 'Contents', 'Info.plist');
-      const id = await run('/usr/bin/plutil', ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', plist]);
-      const ver = await run('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', plist]);
-      if (id !== BUNDLE_ID || ver !== m.version) throw new Error('The download isn’t the expected Titli, so it wasn’t installed.');
-      await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', fresh]);
+      let id = null, ver = null;
+      try { id = plistValue(plist, 'CFBundleIdentifier'); ver = plistValue(plist, 'CFBundleShortVersionString'); }
+      catch (e) { throw new StepError('The update was missing pieces, so it wasn’t installed.', `Info.plist: ${e.message}`); }
+      if (id !== BUNDLE_ID || ver !== m.version) throw new StepError('The download isn’t the expected Titli, so it wasn’t installed.', `bundle ${id} ${ver}, expected ${BUNDLE_ID} ${m.version}`);
+      // a whole, correctly signed app: Apple Silicon Macs won't open one that isn't, so never swap one in
+      await run('/usr/bin/codesign', ['--verify', '--deep', fresh], 'The new version’s signature didn’t check out, so it wasn’t installed.');
 
       // 3. once we've quit: move the old app aside, put the new one in place, reopen. Put the old one back if anything fails.
       const swap = [
@@ -176,13 +203,15 @@ class Updater extends EventEmitter {
       ].join('\n');
       spawn('/bin/sh', ['-c', swap, 'titli-update', target.bundle, fresh, String(process.pid), dir], { detached: true, stdio: 'ignore' }).unref();
       this.log('update ready, restarting into', m.version);
+      logToFile(`verified ${m.version}, swapping ${target.bundle} and reopening`);
       setTimeout(() => app.quit(), 300);
       return { ok: true };
     } catch (e) {
-      this.log('update failed:', e.message);
+      this.log('update failed:', detailOf(e));
+      logToFile(`update failed: ${friendly(e)} | ${detailOf(e)}`);
       cleanup();
       // keep the offer open, with the reason, so they can try again
-      this._set({ status: 'available', error: friendly(e), progress: 0 });
+      this._set({ status: 'available', error: friendly(e), errorDetail: detailOf(e), progress: 0 });
       return { ok: false, error: friendly(e) };
     }
   }
