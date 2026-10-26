@@ -1,0 +1,40 @@
+name: Update check
+
+# Runs the Mac updater's steps against the published update, the same way the app does,
+# and reports each step. For diagnosing "the update didn't work".
+on:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Repeat the updater's steps
+        run: |
+          set +e
+          note() { msg="$(printf '%s' "$2" | tail -n 30 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; echo "::$1::$msg"; }
+          R=https://github.com/asrohit723-jpg/titli-releases/releases
+          curl -sSL -o latest-mac.json "$R/latest/download/latest-mac.json"
+          node -e "const {verifyManifest}=require('./src/core/update-manifest');const fs=require('fs');const m=verifyManifest(fs.readFileSync('latest-mac.json','utf8'),fs.readFileSync('src/main/update-key.pem','utf8'));fs.writeFileSync('m.env','V='+m.version+'\nF='+m.builds.arm64.file+'\nS='+m.builds.arm64.sha256+'\n')" || { note error "manifest check failed"; exit 1; }
+          . ./m.env
+          D="$(mktemp -d "$TMPDIR/titli-update-XXXXXX")"
+          curl -sSL -o "$D/$F" "$R/download/v$V/$F"
+          got="$(shasum -a 256 "$D/$F" | cut -d' ' -f1)"
+          [ "$got" = "$S" ] && note notice "1 download + sha256 OK ($F)" || { note error "sha256 mismatch"; exit 1; }
+          out="$(/usr/bin/ditto -x -k "$D/$F" "$D/new" 2>&1)"; rc=$?
+          note "$([ $rc = 0 ] && echo notice || echo error)" "2 ditto exit $rc: $out"
+          ls -la "$D/new" "$D/new/Titli.app/Contents" 2>&1 | head -20
+          P="$D/new/Titli.app/Contents/Info.plist"
+          out="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$P" 2>&1)"; rc=$?
+          note "$([ $rc = 0 ] && echo notice || echo error)" "3 plutil id exit $rc: $out"
+          out="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$P" 2>&1)"; rc=$?
+          note "$([ $rc = 0 ] && echo notice || echo error)" "4 plutil version exit $rc: $out"
+          out="$(/usr/bin/codesign --verify --deep --strict "$D/new/Titli.app" 2>&1)"; rc=$?
+          note "$([ $rc = 0 ] && echo notice || echo error)" "5 codesign verify exit $rc: $out"
+          out="$(/usr/bin/codesign --verify --deep --strict --verbose=4 "$D/new/Titli.app" 2>&1)"
+          note notice "5b codesign verbose: $out"
+          out="$(xattr -lr "$D/new/Titli.app" 2>&1 | head -20)"
+          note notice "6 xattrs: $out"
