@@ -8,6 +8,12 @@
   let view = null;         // welcome1 | welcome2 | main | settings | quick
   let tab = 'send';
   let toKey = null;        // who the Send tab sends to
+  let qeFor = null;        // whose notes the editor shows (null: everyone)
+  // their own notes first, then the ones for everyone
+  const notesFor = id => {
+    const mine = (S && S.quickFor && S.quickFor[id]) || [];
+    return [...mine.map(t => ({ t, mine: true })), ...S.quick.filter(q => !mine.includes(q)).map(t => ({ t, mine: false }))];
+  };
   let pairStep = false;    // first run, step 2
   let menuFor = null, confirming = null, removing = null;   // People row options
   let flash = null;        // { key, until }: the quick note that was just sent
@@ -240,13 +246,15 @@
   function renderQuick() {
     const box = $('#qnGrid');
     box.textContent = '';
-    if (!S.quick.length) {
-      box.append(el('p', 'qn-empty', 'Notes you send often live here. Write one below and tap “Keep as a quick note”.'));
+    const notes = notesFor(toKey), c = S.circles.find(x => x.id === toKey);
+    if (!notes.length) {
+      box.append(el('p', 'qn-empty', 'Notes you send often live here. Write one below and tap “Keep”.'));
       return;
     }
-    S.quick.forEach((q, i) => {
-      const b = btn('qn');
-      b.setAttribute('aria-label', `Send “${q}”` + (i < 9 ? `. Key ${i + 1}` : ''));
+    notes.forEach(({ t: q, mine }, i) => {
+      const b = btn('qn' + (mine ? ' mine' : ''));
+      if (mine && c) b.title = `Just for ${c.name}`;
+      b.setAttribute('aria-label', `Send “${q}”` + (mine && c ? `, just for ${c.name}` : '') + (i < 9 ? `. Key ${i + 1}` : ''));
       b.append(el('span', 'qn-text', q));
       if (i < 9) b.append(el('kbd', '', String(i + 1)));
       const tick = el('span', 'qn-tick'); tick.append(icon('i-check')); b.append(tick);
@@ -262,7 +270,9 @@
     $('#count').hidden = n === 0;
     $('#count').textContent = `${n}/60`;
     $('#sendNew').disabled = !has;
-    $('#keepNote').hidden = !has;
+    $('#keepRow').hidden = !has;
+    const c = S.circles.find(x => x.id === toKey);
+    $('#keepForLabel').textContent = c ? `Keep for ${c.name}` : 'Keep';
   }
 
   async function sendNote(text, { viaKey = false } = {}) {
@@ -287,13 +297,16 @@
     if (!v) return;
     if (await sendNote(v)) { newNote.value = ''; renderCompose(); }
   });
-  $('#keepNote').addEventListener('click', async () => {
-    const r = await call('addQuick', newNote.value);
+  async function keep(forThem) {
+    const c = forThem ? S.circles.find(x => x.id === toKey) : null;
+    const r = await call('addQuick', newNote.value, c ? c.id : null);
     if (!r.ok) return showErr('#sendErr', r.error);
     newNote.value = ''; renderCompose();
-    toast('Kept as a quick note', 'Tap it any time');
-  });
-  $('#editQuick').addEventListener('click', () => openPage('quick'));
+    toast(c ? `Kept for ${c.name}` : 'Kept for everyone', c ? `It shows first when you send to ${c.name}` : 'Tap it any time');
+  }
+  $('#keepFor').addEventListener('click', () => keep(true));
+  $('#keepAll').addEventListener('click', () => keep(false));
+  $('#editQuick').addEventListener('click', () => { qeFor = toKey; openPage('quick'); });
   $('#emptyInvite').addEventListener('click', async () => {
     selectTab('people');
     if (!S.invites.length) await call('createInvite');
@@ -577,12 +590,30 @@
 
   /* Quick notes editor */
   let dragFrom = null;
+  const editing = () => (qeFor ? ((S.quickFor && S.quickFor[qeFor]) || []) : S.quick);
   function renderQuickEdit() {
+    if (qeFor && !sendable().some(c => c.id === qeFor)) qeFor = null;
+    const who = qeFor ? S.circles.find(x => x.id === qeFor) : null;
+    // whose notes: everyone, or one person or group
+    const chips = $('#qeFor');
+    chips.textContent = '';
+    for (const c of [{ id: null, name: 'Everyone' }, ...sendable()]) {
+      const b = btn('chip-for', c.name);
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String(c.id === qeFor));
+      b.addEventListener('click', () => { qeFor = c.id; clearErr('#qeErr'); renderQuickEdit(); });
+      chips.append(b);
+    }
+    const list = editing();
     const ul = $('#qeList');
     ul.textContent = '';
-    $('#quickCount').textContent = `${S.quick.length} of 12`;
-    if (!S.quick.length) ul.append(el('li', 'empty-note', 'No quick notes yet. Add one below.'));
-    S.quick.forEach((q, i) => {
+    $('#quickCount').textContent = `${list.length} of ${qeFor ? 8 : 12}`;
+    $('#qeHint').textContent = who
+      ? `These show first when you send to ${who.name}, before your notes for everyone. Drag to reorder.`
+      : 'These show for everyone. Drag to reorder, or use the arrow keys on the handle. The first nine on the Send tab get number keys.';
+    $('#qeNew').placeholder = who ? `Add a note just for ${who.name}…` : 'Add a note for everyone…';
+    if (!list.length) ul.append(el('li', 'empty-note', who ? `No notes just for ${who.name} yet. Add one below.` : 'No quick notes yet. Add one below.'));
+    list.forEach((q, i) => {
       const li = el('li', 'qe-item');
       li.draggable = true;
       const grip = btn('grip');
@@ -593,14 +624,12 @@
         e.preventDefault();
         moveQuick(i, i + (e.key === 'ArrowUp' ? -1 : 1), true);
       });
-      const num = el('kbd', '', i < 9 ? String(i + 1) : '');
-      if (i >= 9) num.style.visibility = 'hidden';
       const del = btn('qe-del');
       del.append(icon('i-trash'));
       del.setAttribute('aria-label', `Delete “${q}”`);
       del.title = 'Delete';
-      del.addEventListener('click', () => call('removeQuick', q));
-      li.append(grip, num, el('span', 'qe-text', q), del);
+      del.addEventListener('click', () => call('removeQuick', q, qeFor));
+      li.append(grip, el('span', 'qe-text', q), del);
       li.addEventListener('dragstart', e => { dragFrom = i; li.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(i)); });
       li.addEventListener('dragend', () => { dragFrom = null; $$('.qe-item').forEach(x => x.classList.remove('dragging', 'over')); });
       li.addEventListener('dragover', e => { if (dragFrom === null) return; e.preventDefault(); li.classList.add('over'); });
@@ -611,19 +640,20 @@
   }
 
   async function moveQuick(from, to, refocus) {
-    if (to < 0 || to >= S.quick.length || from === to) return;
-    const list = S.quick.slice();
+    const cur = editing();
+    if (to < 0 || to >= cur.length || from === to) return;
+    const list = cur.slice();
     const [x] = list.splice(from, 1);
     list.splice(to, 0, x);
-    S.quick = list;
+    if (qeFor) S.quickFor[qeFor] = list; else S.quick = list;
     renderQuickEdit(); renderQuick();
     if (refocus) { const g = $$('#qeList .grip')[to]; if (g) g.focus(); }
-    await call('reorderQuick', list);
+    await call('reorderQuick', list, qeFor);
   }
 
   async function addFromEditor() {
     clearErr('#qeErr');
-    const r = await call('addQuick', $('#qeNew').value);
+    const r = await call('addQuick', $('#qeNew').value, qeFor);
     if (!r.ok) return showErr('#qeErr', r.error);
     $('#qeNew').value = '';
   }
@@ -664,7 +694,8 @@
     const tag = (document.activeElement && document.activeElement.tagName) || '';
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag) || e.metaKey || e.ctrlKey || e.altKey || !sendable().length) return;
     let ok = false;
-    if (/^[1-9]$/.test(e.key) && S.quick[+e.key - 1]) { e.preventDefault(); ok = await sendNote(S.quick[+e.key - 1], { viaKey: true }); }
+    const keyed = notesFor(toKey).map(x => x.t);
+    if (/^[1-9]$/.test(e.key) && keyed[+e.key - 1]) { e.preventDefault(); ok = await sendNote(keyed[+e.key - 1], { viaKey: true }); }
     else if (e.key === 'h' || e.key === 'H') { e.preventDefault(); ok = await sendNote(null, { viaKey: true }); }
     else return;
     if (ok) setTimeout(() => api.ui('hide'), 900);

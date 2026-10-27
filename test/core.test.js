@@ -230,3 +230,38 @@ test('store: encrypted when the system offers a key, plain file migrates, a lost
   assert.ok(fs.readdirSync(dir).some(n => n.startsWith('titli.locked-')));
 });
 
+
+test('quick notes: some just for one person, shown first for them only', async t => {
+  const ntfy = createMockNtfy();
+  const url = await ntfy.listen();
+  const rohit = makeCore(url, 'Rohit'), amma = makeCore(url, 'Amma'), anu = makeCore(url, 'Anu');
+  t.after(async () => { rohit.stop(); amma.stop(); anu.stop(); await ntfy.close(); });
+  const inv1 = rohit.createInvite();
+  await until(() => rohit.relayStatus === 'online', 4000, 'online');
+  amma.joinCode(inv1.code);
+  await until(() => rohit.s.circles.length === 1, 5000, 'paired with amma');
+  const inv2 = rohit.createInvite();
+  anu.joinCode(inv2.code);
+  await until(() => rohit.s.circles.length === 2, 5000, 'paired with anu');
+  const toAmma = rohit.s.circles.find(c => c.members[amma.me.id]).id, toAnu = rohit.s.circles.find(c => c.members[anu.me.id]).id;
+
+  assert.ok(rohit.addQuick('Saaptiya?!', toAmma).ok);
+  assert.ok(rohit.addQuick('Call me when free', toAmma).ok);
+  assert.equal(rohit.addQuick('Saaptiya?!', toAmma).ok, false, 'no duplicates');
+  assert.equal(rohit.addQuick('Thinking of you', toAmma).ok, false, 'already in everyone’s notes');
+  assert.ok(rohit.addQuick('Movie tonight?', toAnu).ok);
+  const snap = rohit.snapshot();
+  assert.deepEqual(snap.quickFor[toAmma], ['Saaptiya?!', 'Call me when free']);
+  assert.deepEqual(snap.quickFor[toAnu], ['Movie tonight?']);
+  assert.ok(snap.quick.includes('Thinking of you') && !snap.quick.includes('Movie tonight?'), 'everyone’s list unchanged');
+  assert.ok(rohit.reorderQuick(['Call me when free', 'Saaptiya?!'], toAmma).ok);
+  assert.equal(rohit.snapshot().quickFor[toAmma][0], 'Call me when free');
+  rohit.removeQuick('Movie tonight?', toAnu);
+  assert.equal(rohit.snapshot().quickFor[toAnu], undefined);
+  for (let i = 0; i < 6; i++) rohit.addQuick(`Extra ${i}`, toAmma);
+  assert.equal(rohit.addQuick('One too many', toAmma).ok, false, 'up to 8 each');
+  // unpairing drops their notes
+  rohit.leave(toAmma);
+  rohit._prune();
+  assert.equal(rohit.s.quickFor[toAmma], undefined);
+});

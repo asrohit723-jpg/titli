@@ -9,7 +9,7 @@ emoji or send a butterfly back. No typing back, no chat: just a small moment.
 Runs on **Mac and Windows**, and they talk to each other: Mac to Mac, Windows to Windows, Mac to Windows
 and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 
-- **Quick notes**: save up to 12 short notes (60 characters max), reorder them, and send one with a click, a number key, or from the menu-bar icon's right-click menu.
+- **Quick notes**: save up to 12 short notes for everyone, plus up to 8 just for each person or group (they show first when you send to them). Reorder them, and send one with a click, a number key, or from the menu-bar icon's right-click menu.
 - **One-to-one or groups**: pair with one person, or make a group where everyone gets the butterfly.
 - **Never at a bad moment**: butterflies wait while you're on a call (camera or mic in use), something is full screen, the screen is locked, the laptop is asleep, or you've stepped away. They're also invisible to screen sharing and recordings.
 - **Lands somewhere new**: a corner or the middle of a side, never the same spot twice running, keeping clear of the menu bar, Dock and taskbar (or always top right, if you prefer).

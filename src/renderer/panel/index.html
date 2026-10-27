@@ -136,7 +136,10 @@
               <span class="counter" id="count" hidden>0/60</span>
               <button type="button" class="send-circle" id="sendNew" aria-label="Send note" title="Send (Enter)" disabled><svg aria-hidden="true"><use href="#i-up"/></svg></button>
             </div>
-            <button type="button" class="link with-icon" id="keepNote" hidden><svg aria-hidden="true"><use href="#i-plus"/></svg>Keep as a quick note</button>
+            <span class="keep-row" id="keepRow" hidden>
+              <button type="button" class="link with-icon" id="keepFor"><svg aria-hidden="true"><use href="#i-plus"/></svg><span id="keepForLabel">Keep for them</span></button>
+              <button type="button" class="link" id="keepAll">Keep for everyone</button>
+            </span>
             <p class="err" id="sendErr" role="alert" hidden></p>
           </div>
         </div>
@@ -292,8 +295,9 @@
     </header>
     <div class="scroll">
       <div class="page-body fill">
+        <div class="qe-for" id="qeFor" role="radiogroup" aria-label="Whose notes"></div>
         <ul class="qe-list" id="qeList"></ul>
-        <p class="hint">Drag to reorder, or use the arrow keys on the handle. The first nine get number keys.</p>
+        <p class="hint" id="qeHint"></p>
         <div class="bottom-stack">
           <div class="compose">
             <label class="sr" for="qeNew">New quick note</label>

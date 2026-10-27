@@ -152,7 +152,9 @@ function quickMenu() {
     const send = text => () => notifySent(core.send({ circleId: to.id, text, style: snap.settings.style }), to.name);
     items.push({ label: `Send to ${to.name}`, enabled: false });
     items.push({ label: '♥  A heart', click: send(null) });
-    snap.quick.forEach((q, i) => items.push({ label: q, accelerator: i < 9 ? String(i + 1) : undefined, click: send(q) }));
+    // their own notes first, then the ones for everyone
+    const notes = [...(snap.quickFor[to.id] || []), ...snap.quick.filter(q => !(snap.quickFor[to.id] || []).includes(q))];
+    notes.forEach((q, i) => items.push({ label: q, accelerator: i < 9 ? String(i + 1) : undefined, click: send(q) }));
     if (circles.length > 1) {
       items.push({ type: 'separator' });
       items.push({ label: 'Send to', submenu: circles.map(c => ({ label: c.kind === 'group' ? `${c.name} (group)` : c.name, type: 'radio', checked: c.id === to.id, click: () => { store.state.lastTo = c.id; store.save(); pushState(); } })) });

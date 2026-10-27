@@ -27,6 +27,7 @@ function defaults() {
     invites: [],     // pair invites you created that nobody has used yet
     joining: [],     // pair codes you entered, waiting for the other side to answer
     quick: DEFAULT_QUICK.slice(),
+    quickFor: {},    // circle id -> notes just for that person or group (shown first when sending to them)
     sent: [],        // what you sent, with who has seen it
     inbox: [],       // butterflies waiting to land on this laptop
     received: [],    // butterflies that have landed here (most recent first)
@@ -76,6 +77,7 @@ class Store {
     for (const k of ['circles', 'invites', 'joining', 'quick', 'sent', 'inbox', 'received', 'outbox', 'handled']) {
       if (!Array.isArray(this.state[k])) this.state[k] = d[k];
     }
+    if (!this.state.quickFor || typeof this.state.quickFor !== 'object' || Array.isArray(this.state.quickFor)) this.state.quickFor = {};
     // scheduling was removed; drop what earlier versions saved for it
     delete this.state.schedules; delete this.state.lastScheduleCheck;
     return this.state;

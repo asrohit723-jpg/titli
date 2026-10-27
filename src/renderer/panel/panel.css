@@ -111,6 +111,12 @@ kbd{font-family:var(--font-body)}
 .qn-grid{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px}
 .qn{display:flex; align-items:center; gap:6px; min-height:52px; padding:7px 8px 7px 12px; border:1px solid var(--line); border-radius:14px; background:var(--surface); text-align:left; transition:background .2s, border-color .2s}
 .qn:hover{border-color:var(--line-2)}
+.qn.mine{border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); background:color-mix(in srgb, var(--accent) 7%, var(--surface))}
+.keep-row{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+.qe-for{display:flex; gap:6px; overflow-x:auto; padding:2px 0 8px; scrollbar-width:none}
+.qe-for::-webkit-scrollbar{display:none}
+.chip-for{flex:none; height:30px; padding:0 12px; border-radius:999px; border:1px solid var(--line-2); background:transparent; color:var(--ink); font-size:12.5px; font-weight:600; white-space:nowrap}
+.chip-for[aria-checked="true"]{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
 .qn-text{flex:1; min-width:0; font-family:var(--font-display); font-variation-settings:"SOFT" 50; font-size:15px; line-height:1.15; text-wrap:balance; color:var(--ink); overflow-wrap:anywhere}
 .qn kbd, .qe-item kbd{flex:none; width:20px; height:20px; border-radius:6px; background:var(--surface-2); color:var(--dim); font-size:11px; font-weight:600; line-height:20px; text-align:center}
 .qn .qn-tick{display:none; flex:none; width:20px; height:20px; border-radius:50%; background:var(--accent); color:var(--on-accent); place-items:center}
@@ -127,7 +133,7 @@ kbd{font-family:var(--font-body)}
 .send-circle{width:36px; height:36px; flex:none; border:0; border-radius:50%; background:var(--accent); color:var(--on-accent); display:grid; place-items:center; padding:0; transition:background .2s, color .2s}
 .send-circle svg{width:17px; height:17px}
 .send-circle:disabled{background:var(--surface-2); color:var(--dim); cursor:default}
-#keepNote{align-self:flex-start}
+#keepRow{align-self:flex-start}
 
 .empty-hero{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:8px 12px 24px; text-align:center}
 .empty-hero .display{font-size:25px}

@@ -22,7 +22,7 @@ const codes = require('./codes');
 const { seal, open } = require('./seal');
 const identity = require('./identity');
 
-const MAX_TEXT = 60, MAX_NAME = 24, MAX_QUICK = 12, MAX_SENT = 40, MAX_RECEIVED = 100, MAX_HANDLED = 800, MAX_INBOX = 50, MAX_INVITES = 5;
+const MAX_TEXT = 60, MAX_NAME = 24, MAX_QUICK = 12, MAX_PERSONAL = 8, MAX_SENT = 40, MAX_RECEIVED = 100, MAX_HANDLED = 800, MAX_INBOX = 50, MAX_INVITES = 5;
 const MAX_MEMBERS = 30;
 const HOUR = 3600 * 1000, DAY = 24 * HOUR;
 const INVITE_TTL = DAY, USED_INVITE_TTL = 10 * 60 * 1000;
@@ -114,28 +114,45 @@ class TitliCore extends EventEmitter {
     return { ok: true };
   }
 
-  /* ---------------- quick notes ---------------- */
+  /* ---------------- quick notes ----------------
+     Notes for everyone, plus notes just for one person or group (circleId), which show first when sending to them. */
 
-  addQuick(text) {
+  _quickList(circleId) {
+    if (!circleId) return this.s.quick;
+    if (!this._circle(circleId)) return null;
+    const lists = this.s.quickFor || (this.s.quickFor = {});
+    return lists[circleId] || (lists[circleId] = []);
+  }
+
+  addQuick(text, circleId = null) {
     const t = clip(text, MAX_TEXT);
     if (!t) return { ok: false, error: 'Write a few words to save.' };
-    if (this.s.quick.includes(t)) return { ok: false, error: 'That note is already saved.' };
-    if (this.s.quick.length >= MAX_QUICK) return { ok: false, error: `You can keep up to ${MAX_QUICK} quick notes. Delete one first.` };
-    this.s.quick.push(t); this._save();
+    const list = this._quickList(circleId);
+    if (!list) return { ok: false, error: 'That person or group is gone.' };
+    const who = circleId ? this.snapshot().circles.find(c => c.id === circleId).name : null;
+    if (list.includes(t)) return { ok: false, error: who ? `That note is already saved for ${who}.` : 'That note is already saved.' };
+    if (circleId && this.s.quick.includes(t)) return { ok: false, error: 'That note is already in your notes for everyone.' };
+    const max = circleId ? MAX_PERSONAL : MAX_QUICK;
+    if (list.length >= max) return { ok: false, error: who ? `You can keep up to ${max} notes just for ${who}. Delete one first.` : `You can keep up to ${max} quick notes. Delete one first.` };
+    list.push(t); this._save();
     return { ok: true };
   }
 
-  removeQuick(text) {
-    this.s.quick = this.s.quick.filter(q => q !== text); this._save();
+  removeQuick(text, circleId = null) {
+    if (!circleId) this.s.quick = this.s.quick.filter(q => q !== text);
+    else if (this.s.quickFor && this.s.quickFor[circleId]) this.s.quickFor[circleId] = this.s.quickFor[circleId].filter(q => q !== text);
+    this._save();
     return { ok: true };
   }
 
   // the same notes in a new order (the first nine get number keys)
-  reorderQuick(list) {
-    const same = Array.isArray(list) && list.length === this.s.quick.length && list.every(x => typeof x === 'string') &&
-      [...list].sort().join('\n') === [...this.s.quick].sort().join('\n');
+  reorderQuick(list, circleId = null) {
+    const cur = this._quickList(circleId);
+    const same = cur && Array.isArray(list) && list.length === cur.length && list.every(x => typeof x === 'string') &&
+      [...list].sort().join('\n') === [...cur].sort().join('\n');
     if (!same) return { ok: false, error: 'Your notes changed while you were moving them. Try again.' };
-    this.s.quick = list.slice(); this._save();
+    if (circleId) this.s.quickFor[circleId] = list.slice(); else this.s.quick = list.slice();
+    this._save();
     return { ok: true };
   }
 
@@ -324,6 +341,7 @@ class TitliCore extends EventEmitter {
       invites: this.s.invites.filter(i => i.kind !== 'group' && !i.circleId).map(i => ({ code: i.code, createdAt: i.createdAt })),
       joining: this.s.joining.map(j => ({ code: j.code, kind: j.kind, createdAt: j.createdAt })),
       quick: this.s.quick.slice(),
+      quickFor: Object.fromEntries(Object.entries(this.s.quickFor || {}).filter(([id, l]) => this._circle(id) && Array.isArray(l) && l.length).map(([id, l]) => [id, l.slice()])),
       sent: this.s.sent.slice(0, 20).map(m => ({ id: m.id, circleId: m.circleId, text: m.text, at: m.at, to: nameOf(m.circleId), status: this._statusOf(m) })),
       received: this.s.received.filter(r => !r.preview).slice(0, 20).map(r => ({ id: r.id, kind: r.kind, circleId: r.circleId, text: r.text, fromName: r.fromName, circleName: r.circleName, at: r.at, react: r.react || null })),
       inboxCount: this.s.inbox.length,
@@ -789,6 +807,8 @@ class TitliCore extends EventEmitter {
     this.s.invites = this.s.invites.filter(i => i.kind === 'group' ? now - i.createdAt < INVITE_TTL : (i.circleId ? now - i.usedAt < USED_INVITE_TTL : now - i.createdAt < INVITE_TTL));
     this.s.joining = this.s.joining.filter(j => now - j.createdAt < INVITE_TTL);
     for (const c of this.s.circles) c.old = (c.old || []).filter(o => o.until > now);
+    // notes kept for someone you're no longer connected to
+    if (this.s.quickFor) for (const id of Object.keys(this.s.quickFor)) if (!this._circle(id)) delete this.s.quickFor[id];
     const after = this.s.invites.length + this.s.joining.length + this.s.circles.reduce((n, c) => n + c.old.length, 0);
     if (after !== before) { this._syncTopics(); this._save(); }
   }
