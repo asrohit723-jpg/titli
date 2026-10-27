@@ -61,6 +61,7 @@ function dataLock() {
 }
 
 app.whenReady().then(() => {
+  if (process.env.TITLI_TEST_DATA) console.log('[titli] data check: opening saved data');
   store = new Store(path.join(app.getPath('userData'), 'titli.json'), dataLock());
   store.load();
   const relay = new NtfyRelay({ server: store.state.settings.relay });

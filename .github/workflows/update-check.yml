@@ -121,12 +121,19 @@ jobs:
           item() { security find-generic-password -s "Titli Safe Storage" >/dev/null 2>&1 && echo yes || echo no; }
           report=""
           install adhoc; runfor adhoc 30
+          # a logged-in Mac's own keychain is unlocked; the build machine's isn't, so give it one that is
+          security create-keychain -p pw "$RUNNER_TEMP/user.keychain-db"
+          security set-keychain-settings "$RUNNER_TEMP/user.keychain-db"
+          security unlock-keychain -p pw "$RUNNER_TEMP/user.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/user.keychain-db" $(security list-keychains -d user | sed -e 's/"//g')
+          security default-keychain -s "$RUNNER_TEMP/user.keychain-db"
           report="${report}after the ad-hoc version ran: keychain item=$(item)%0A"
           install signedA
-          a="$(TITLI_TEST_DATA=write timeout 90 /Applications/Titli.app/Contents/MacOS/Titli 2>&1 | grep '\[titli\] data' || echo 'TIMED OUT (prompt?)')"
+          a="$(TITLI_TEST_DATA=write timeout 90 /Applications/Titli.app/Contents/MacOS/Titli 2>&1 | grep '\[titli\] data' | tr '\n' ' ')"; [ -n "$a" ] || a='TIMED OUT before starting'
           report="${report}signed 0.1.2 writes: $a%0A"
           install signedB
-          b="$(TITLI_TEST_DATA=read timeout 90 /Applications/Titli.app/Contents/MacOS/Titli 2>&1 | grep '\[titli\] data' || echo 'TIMED OUT (prompt?)')"
+          b="$(TITLI_TEST_DATA=read timeout 90 /Applications/Titli.app/Contents/MacOS/Titli 2>&1 | grep '\[titli\] data' | tr '\n' ' ')"; [ -n "$b" ] || b='TIMED OUT before starting'
+          report="${report}keychain item now: $(item)%0A"
           report="${report}signed 0.1.3 reads: $b%0A"
           head -c 400 "$HOME/Library/Application Support/Titli/titli.json"; echo
           if echo "$a" | grep -q 'encrypted=true onDiskEncrypted=true marker=true' && echo "$b" | grep -q 'encrypted=true onDiskEncrypted=true marker=true unlockFailed=false'; then
