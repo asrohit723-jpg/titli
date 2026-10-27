@@ -11,6 +11,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the update (off = build and check only)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -183,6 +188,7 @@ jobs:
           fi
 
       - name: Publish to titli-releases
+        if: github.event_name != 'workflow_dispatch' || inputs.publish
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           repository: asrohit723-jpg/titli-releases
