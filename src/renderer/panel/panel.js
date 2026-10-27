@@ -8,6 +8,14 @@
   let view = null;         // welcome1 | welcome2 | main | settings | quick
   let tab = 'send';
   let toKey = null;        // who the Send tab sends to
+  // the one-tap butterfly, per person: what it's called, its emoji, and the big button's words
+  const GESTURE = {
+    heart: { label: 'A heart', emoji: '❤️', button: n => `Send a heart to ${n}` },
+    hug: { label: 'A hug', emoji: '🤗', button: n => `Send a hug to ${n}` },
+    wave: { label: 'A wave', emoji: '👋', button: n => `Wave at ${n}` },
+    cheer: { label: 'A cheer', emoji: '🙌', button: n => `Cheer ${n} on` }
+  };
+  const gestureOf = g => GESTURE[g] || GESTURE.heart;
   let qeFor = null;        // whose notes the editor shows (null: everyone)
   // their own notes first, then the ones for everyone
   const notesFor = id => {
@@ -127,6 +135,8 @@
 
   /* ---------- rendering ---------- */
   function render() {
+    // the app's colour follows your butterfly
+    if (S && S.settings) document.documentElement.dataset.accent = S.settings.style || 'rose';
     if (!S) return;
     if (!S.me.name) {
       show('welcome1');
@@ -238,7 +248,12 @@
     if (!list.some(c => c.id === toKey)) toKey = (list.find(c => c.id === S.lastTo) || list[0] || {}).id || null;
     renderToRow($('#toRow'), list, toKey, id => { toKey = id; renderSend(); });
     const c = list.find(x => x.id === toKey);
-    $('#heartLabel').textContent = c ? `Send a heart to ${c.name}` : 'Send a heart';
+    const gs = gestureOf(c && c.tap);
+    $('#heartLabel').textContent = c ? gs.button(c.name) : 'Send a heart';
+    $('#tapHeart').classList.toggle('gone', !!(c && c.tap && c.tap !== 'heart'));
+    $('#tapEmoji').hidden = !(c && c.tap && c.tap !== 'heart');
+    $('#tapEmoji').textContent = gs.emoji;
+    $('#heartBtn').title = c ? `Change what one tap sends in People → ${c.name}` : '';
     renderQuick();
     renderCompose();
   }
@@ -338,10 +353,11 @@
     }
   }
 
-  function noteLine(text, kind) {
+  function noteLine(text, kind, g) {
     const n = el('span', 'act-note');
     if (kind === 'visit') n.append(icon('bfly', 'bf'), document.createTextNode('A butterfly back'));
-    else if (text == null) n.append(icon('i-heart', 'heart'), document.createTextNode('A heart'));
+    else if (text == null && (!g || g === 'heart')) n.append(icon('i-heart', 'heart'), document.createTextNode('A heart'));
+    else if (text == null) n.append(el('span', 'act-emoji', gestureOf(g).emoji), document.createTextNode(gestureOf(g).label));
     else n.textContent = text;
     return n;
   }
@@ -353,7 +369,7 @@
     const wrap = el('span', 'act-av');
     wrap.append(c ? circleAv(c, 'sm') : avatar({ name: m.to }, 'sm'), badge(true));
     const body = el('div', 'act-body');
-    body.append(noteLine(m.text));
+    body.append(noteLine(m.text, null, m.g));
     const meta = el('span', 'act-meta');
     meta.append(document.createTextNode(`To ${m.to} · ${timeStr(m.at)} ·`));
     const st = el('span', 'stat ' + m.status.cls);
@@ -371,7 +387,7 @@
     const wrap = el('span', 'act-av');
     wrap.append(avatar({ name: r.fromName }, 'sm'), badge(false));
     const body = el('div', 'act-body');
-    body.append(noteLine(r.text, r.kind));
+    body.append(noteLine(r.text, r.kind, r.g));
     let meta = `From ${r.fromName}${r.circleName ? ' in ' + r.circleName : ''} · ${timeStr(r.at)}`;
     if (r.kind === 'visit' && r.text) meta += ` · for “${r.text}”`;
     if (r.react) meta += ` · you sent ${r.react === 'butterfly' ? 'a butterfly back' : r.react}`;
@@ -392,7 +408,7 @@
       body.append(el('span', 'conn-name', c.name));
       let meta;
       if (c.kind === 'group') meta = c.members.length ? `Group · you, ${c.members.join(', ')}` : 'Group · no one has joined yet';
-      else meta = c.createdAt ? `Just you two · paired ${shortDate(c.createdAt)}` : 'Just you two';
+      else meta = c.createdAt ? `One-to-one · since ${shortDate(c.createdAt)}` : 'One-to-one';
       body.append(el('span', 'conn-meta', meta));
       const more = btn('icon-btn');
       more.append(icon('i-more'));
@@ -443,12 +459,12 @@
     const box = el('div', 'conn-actions');
     const isGroup = c.kind === 'group';
     if (confirming === c.id) {
-      box.append(el('p', 'ask', isGroup ? `Leave ${c.name}? You’ll stop getting its butterflies.` : `Unpair from ${c.name}? You won’t be able to send each other butterflies.`));
-      const yes = btn('btn outline danger', isGroup ? 'Leave' : 'Unpair');
+      box.append(el('p', 'ask', isGroup ? `Leave ${c.name}? You’ll stop getting its butterflies.` : `Remove ${c.name}? You won’t be able to send each other butterflies.`));
+      const yes = btn('btn outline danger', isGroup ? 'Leave' : 'Remove');
       yes.addEventListener('click', async () => {
         menuFor = null; confirming = null;
         const r = await call('leave', c.id);
-        if (r.ok) toast(isGroup ? `You left ${c.name}` : `You and ${c.name} are unpaired`);
+        if (r.ok) toast(isGroup ? `You left ${c.name}` : `${c.name} is removed`);
       });
       const no = btn('btn outline', 'Keep');
       no.addEventListener('click', () => { confirming = null; renderPeople(); });
@@ -469,6 +485,25 @@
       box.append(yes, no);
       return box;
     }
+
+    // what one tap sends them: a heart for some, a wave or a hug for others
+    const tapRow = el('div', 'tap-row');
+    tapRow.append(el('span', 'tap-lbl', 'One tap sends'));
+    const chips = el('div', 'tap-chips');
+    chips.setAttribute('role', 'radiogroup');
+    chips.setAttribute('aria-label', `What one tap sends ${c.name}`);
+    for (const [key, g] of Object.entries(GESTURE)) {
+      const b = btn('tap-chip');
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String((c.tap || 'heart') === key));
+      b.setAttribute('aria-label', g.label);
+      b.title = g.label;
+      b.textContent = g.emoji;
+      b.addEventListener('click', async () => { await call('setTap', c.id, key); });
+      chips.append(b);
+    }
+    tapRow.append(chips);
+    box.append(tapRow);
 
     // the same five emoji on both screens means no one is sitting in the middle
     const safe = el('div', 'safety');
@@ -509,7 +544,7 @@
         box.append(list);
       }
     }
-    const leave = btn('btn outline danger', isGroup ? 'Leave group' : 'Unpair');
+    const leave = btn('btn outline danger', isGroup ? 'Leave group' : 'Remove');
     leave.addEventListener('click', () => { confirming = c.id; renderPeople(); });
     box.append(leave);
     return box;

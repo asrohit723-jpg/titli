@@ -6,7 +6,9 @@ const fs = require('fs');
 const path = require('path');
 const { newId } = require('./codes');
 
-const DEFAULT_QUICK = ['Thinking of you', 'Saaptiya?', 'Drink some water 💧', 'Miss you already', 'Proud of you', 'Come home soon'];
+const DEFAULT_QUICK = ['Reached home?', 'Saaptiya?', 'Call me when free', 'Thinking of you', 'You got this 💪', 'Drink some water 💧'];
+// the first defaults leaned romantic; anyone who never changed them gets the new ones
+const OLD_DEFAULT_QUICK = ['Thinking of you', 'Saaptiya?', 'Drink some water 💧', 'Miss you already', 'Proud of you', 'Come home soon'];
 
 function defaults() {
   return {
@@ -77,6 +79,7 @@ class Store {
     for (const k of ['circles', 'invites', 'joining', 'quick', 'sent', 'inbox', 'received', 'outbox', 'handled']) {
       if (!Array.isArray(this.state[k])) this.state[k] = d[k];
     }
+    if (JSON.stringify(this.state.quick) === JSON.stringify(OLD_DEFAULT_QUICK)) this.state.quick = DEFAULT_QUICK.slice();
     if (!this.state.quickFor || typeof this.state.quickFor !== 'object' || Array.isArray(this.state.quickFor)) this.state.quickFor = {};
     // scheduling was removed; drop what earlier versions saved for it
     delete this.state.schedules; delete this.state.lastScheduleCheck;

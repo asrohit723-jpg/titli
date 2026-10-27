@@ -1,6 +1,6 @@
 # Titli
 
-A tiny butterfly that carries a short note onto someone's screen.
+A tiny butterfly that carries a short note onto someone's screen: for family, friends, or someone special.
 
 Tap a saved quick note (or just a heart), and a small butterfly drifts onto the other person's
 screen, lands in the top-right corner, opens its wings and shows your note. They can react with an
@@ -11,6 +11,8 @@ and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 
 - **Quick notes**: save up to 12 short notes for everyone, plus up to 8 just for each person or group (they show first when you send to them). Reorder them, and send one with a click, a number key, or from the menu-bar icon's right-click menu.
 - **One-to-one or groups**: pair with one person, or make a group where everyone gets the butterfly.
+- **One tap, your way**: for each person or group, one tap sends a heart, a hug, a wave or a cheer.
+- **Seven butterflies**: Blush Rose, Blush Peony, Gold Leaf, Midnight, Sky Morpho, Spring Leaf and Monarch. The whole app takes your butterfly's colour.
 - **Never at a bad moment**: butterflies wait while you're on a call (camera or mic in use), something is full screen, the screen is locked, the laptop is asleep, or you've stepped away. They're also invisible to screen sharing and recordings.
 - **Lands somewhere new**: a corner or the middle of a side, never the same spot twice running, keeping clear of the menu bar, Dock and taskbar (or always top right, if you prefer).
 - **A different flight every time**: it arrives one of 8 ways (a wide sweep, a lazy loop, a figure eight, a dive, a fly-by from beside you...) and leaves one of 6, each re-shaped on every visit and flown in a calm, easy or playful mood. It never repeats its last few routes.

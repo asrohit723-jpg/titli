@@ -48,7 +48,11 @@
     rose:     { grad:['#FFF6EC','#FFE9E6','#F7C9D0','#E99FB0'], root:'#FFD9A8', memAlpha:.9, ink:'#8A3A58', inkA:.7, rose:{ deep:'#B23A5E', base:'#E8718F', rim:'#FFD6DF', core:'#8E2A4C', line:'#7A2A48' }, leaf:['#A9C4A0','#7A9C7E'], leafLine:'#5E7A62', leafVein:'#E6F0DE', pearl:'#FFFFFF', under:'#F6E6E6', irid:.3, spec:.3,  body:0x5a3246, glint:[1,.86,.7] },
     peony:    { grad:['#FFFFFF','#FFF2F6','#FFD9E6','#F6B8CF'], root:'#FFE4EC', memAlpha:.9, ink:'#B06A8A', inkA:.6, rose:{ deep:'#C9668C', base:'#F4A3BE', rim:'#FFEAF1', core:'#A24C72', line:'#9A4E70' }, leaf:['#BFD6B8','#8FB092'], leafLine:'#6C8A70', leafVein:'#EEF6EA', pearl:'#FFFFFF', under:'#F9ECF1', irid:.3, spec:.3,  body:0x6a4458, glint:[1,.84,.9] },
     gold:     { grad:['#FFFBF0','#FFF2DC','#F9DFB6','#E9C58C'], root:'#FFE2A6', memAlpha:.9, ink:'#B8862E', inkA:.75, rose:{ deep:'#B23A5E', base:'#E8718F', rim:'#FFD6DF', core:'#8E2A4C', line:'#9A5A2A' }, leaf:['#B9C48E','#8A9A66'], leafLine:'#7E6A30', leafVein:'#F4EAC8', pearl:'#FFF4D6', under:'#F3E6CC', irid:.25, spec:.7,  body:0x6e5026, glint:[1,.9,.6] },
-    midnight: { grad:['#2A2238','#221B2F','#1A1424','#120E1A'], root:'#5A3E6C', memAlpha:.95, ink:'#E6C98A', inkA:.8, rose:{ deep:'#9E2A4E', base:'#E85C7C', rim:'#FFC6D2', core:'#6E1A36', line:'#3A1222' }, leaf:['#6E9A7E','#3E6650'], leafLine:'#E6C98A', leafVein:'#F0DDB0', pearl:'#F6E3B8', under:'#2A2230', irid:.45, spec:.8, body:0x1a1424, glint:[1,.92,.72] }
+    midnight: { grad:['#2A2238','#221B2F','#1A1424','#120E1A'], root:'#5A3E6C', memAlpha:.95, ink:'#E6C98A', inkA:.8, rose:{ deep:'#9E2A4E', base:'#E85C7C', rim:'#FFC6D2', core:'#6E1A36', line:'#3A1222' }, leaf:['#6E9A7E','#3E6650'], leafLine:'#E6C98A', leafVein:'#F0DDB0', pearl:'#F6E3B8', under:'#2A2230', irid:.45, spec:.8, body:0x1a1424, glint:[1,.92,.72] },
+    // real butterflies, no flowers: a blue morpho, a fresh green, and a monarch with its black edge and white dots
+    sky:      { grad:['#F4FBFF','#CDEBFF','#76BDF0','#2A7FCC'], root:'#BFE2FF', memAlpha:.94, ink:'#173E63', inkA:.55, rose:{ deep:'#1F6FB8', base:'#5AA8E6', rim:'#DDF0FF', core:'#174E86', line:'#173E63' }, leaf:['#A9C4A0','#7A9C7E'], leafLine:'#5E7A62', leafVein:'#E6F0DE', pearl:'#FFFFFF', under:'#DDEBF6', irid:.65, spec:.6, body:0x1d2f44, glint:[.75,.9,1], flowers:false, band:.045 },
+    leaf:     { grad:['#F7FFF2','#DDF4D0','#A6DA8F','#5DAA67'], root:'#E3F6CC', memAlpha:.92, ink:'#2C5A37', inkA:.55, rose:{ deep:'#3E8F52', base:'#7CC48A', rim:'#E6F6E6', core:'#2C6A3C', line:'#2C5A37' }, leaf:['#A9C4A0','#7A9C7E'], leafLine:'#5E7A62', leafVein:'#E6F0DE', pearl:'#FFFFFF', under:'#E4F1DC', irid:.3, spec:.4, body:0x2b4430, glint:[.82,1,.8], flowers:false, band:0 },
+    monarch:  { grad:['#FFE6B3','#FFC163','#F49428','#D9650F'], root:'#FFD08A', memAlpha:.95, ink:'#1C110B', inkA:.95, rose:{ deep:'#C9560C', base:'#F28A2E', rim:'#FFE3C2', core:'#8E3A06', line:'#1C110B' }, leaf:['#A9C4A0','#7A9C7E'], leafLine:'#5E7A62', leafVein:'#E6F0DE', pearl:'#FFFFFF', under:'#F2D7B4', irid:.2, spec:.45, body:0x1c110b, glint:[1,.86,.62], flowers:false, band:.085 }
   };
   const toPx = v => [(0.02 + 0.96 * v[0]) * TEX, (1 - (0.02 + 0.96 * v[1])) * TEX];
   function trace(x, shape) {
@@ -190,15 +194,17 @@
     });
 
     x.globalAlpha = 1;
-    // leaves under roses, then roses
-    wd.roses.forEach(r => {
+    // a dark margin along the edge (monarch, morpho): drawn inside the wing only, the white dots sit on it
+    if (st.band) { x.lineWidth = TEX * st.band * 2; x.strokeStyle = st.ink; x.lineJoin = 'round'; trace(x, shape); x.stroke(); }
+    // leaves under roses, then roses (the flower styles only)
+    if (st.flowers !== false) wd.roses.forEach(r => {
       const p = toPx([r.x, r.y]), R = r.r * TEX;
       r.leaves.forEach(([deg, len]) => {
         const a = -deg * Math.PI / 180;
         drawLeaf(x, p[0] + Math.cos(a) * R * .78, p[1] + Math.sin(a) * R * .78, len * TEX, a, st);
       });
     });
-    wd.roses.forEach(r => { const p = toPx([r.x, r.y]); drawRose(x, p[0], p[1], r.r * TEX, r.rot, st, r.bud); });
+    if (st.flowers !== false) wd.roses.forEach(r => { const p = toPx([r.x, r.y]); drawRose(x, p[0], p[1], r.r * TEX, r.rot, st, r.bud); });
     x.restore();
 
     x.lineWidth = TEX * .03; x.strokeStyle = st.ink; x.lineJoin = 'round'; x.globalAlpha = .28; trace(x, shape); x.stroke();
@@ -347,7 +353,9 @@
 
   /* ---------- style ---------- */
   function applyStyle(key) {
+    if (!STYLES[key]) key = 'rose';
     const st = STYLES[key], t = wingTextures(key);
+    document.documentElement.dataset.accent = key;   // the note's colour matches the butterfly that brought it
     foreMat.uniforms.uMap.value = t.fore; hindMat.uniforms.uMap.value = t.hind;
     [foreMat, hindMat].forEach(m => { m.uniforms.uIrid.value = st.irid; m.uniforms.uSpec.value = st.spec; m.uniforms.uUnder.value.set(st.under); });
     bodyMat.color.setHex(st.body);
@@ -620,6 +628,8 @@
      ====================================================================== */
   const bridge = window.overlay;
   const bubble = $('#bubble');
+  // a note with no words: the gesture they picked for you
+  const GLYPH = { heart: '♥', hug: '🤗', wave: '👋', cheer: '🙌' };
   let current = null, flowGen = 0, autoTimer = null, interactive = false;
   const NOTE_STAYS_MS = 10 * 60 * 1000, VISIT_STAYS_MS = 6000;
 
@@ -696,7 +706,7 @@
     const note = $('#bNote');
     note.classList.toggle('b-heart', !visit && !item.text);
     note.classList.toggle('b-visit', visit);
-    note.textContent = visit ? 'sent a butterfly back 🦋' : (item.text || '♥');
+    note.textContent = visit ? 'sent a butterfly back 🦋' : (item.text || GLYPH[item.g] || GLYPH.heart);
     $('#bReact').hidden = visit;
     bubble.setAttribute('aria-label', visit ? `${item.fromName} sent a butterfly back` : `Note from ${item.fromName}`);
     bubble.hidden = false; placeOverlays();

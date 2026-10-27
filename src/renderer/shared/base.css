@@ -32,6 +32,29 @@
     color-scheme:dark;
   }
 }
+/* the app's colour follows your butterfly (rose and peony keep the pink above); the others get neutral greys */
+:root:is([data-accent="gold"],[data-accent="midnight"],[data-accent="sky"],[data-accent="leaf"],[data-accent="monarch"]){
+  --surface:#F4F4F6; --surface-2:#E6E6EA; --chip:#E6E6EA; --track-off:#D5D5DB; --mist:#64646C; --dim:#64646C; --group-ink:#64646C; --ink:#1A1A1E;
+  --line:rgba(20,20,30,.07); --line-2:rgba(20,20,30,.12); --glass-line:rgba(20,20,30,.08); --glass-ink:#1E1E22; --glass-muted:#73737A; --glass-btn:rgba(20,20,30,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:is([data-accent="gold"],[data-accent="midnight"],[data-accent="sky"],[data-accent="leaf"],[data-accent="monarch"]){
+    --bg:#121214; --surface:#1C1C1F; --surface-2:#2A2A2E; --tab-on:#323237; --chip:#323237; --track-off:#38383E; --ink:#F2F2F4; --mist:#ABABB3; --dim:#8E8E96; --group-ink:#CFCFD6;
+    --glass:#232326; --glass-ink:#F2F2F4; --glass-muted:#AFAFB6;
+  }
+}
+:root[data-accent="gold"]{--accent:#946510; --link:#855A0E; --accent-glow:rgba(148,101,16,.8); --tint:#F8EEDB}
+:root[data-accent="midnight"]{--accent:#6A4FB8; --link:#5C44A2; --accent-glow:rgba(106,79,184,.8); --tint:#EEE9F8}
+:root[data-accent="sky"]{--accent:#1D6BB3; --link:#195E9E; --accent-glow:rgba(29,107,179,.8); --tint:#E4F0FB}
+:root[data-accent="leaf"]{--accent:#2B7841; --link:#256A39; --accent-glow:rgba(43,120,65,.8); --tint:#E3F2E6}
+:root[data-accent="monarch"]{--accent:#A84F08; --link:#984707; --accent-glow:rgba(168,79,8,.8); --tint:#FBEADB}
+@media (prefers-color-scheme: dark){
+  :root[data-accent="gold"]{--accent:#E8C077; --on-accent:#3A2A08; --kbd-on-accent:rgba(58,42,8,.1); --kbd-on-accent-ink:#6B4E12; --link:#E8C077; --accent-glow:rgba(232,192,119,.7); --tint:#33291A}
+  :root[data-accent="midnight"]{--accent:#B9A6F2; --on-accent:#1E1440; --kbd-on-accent:rgba(30,20,64,.1); --kbd-on-accent-ink:#3E2E7A; --link:#C2B1F5; --accent-glow:rgba(185,166,242,.7); --tint:#272236}
+  :root[data-accent="sky"]{--accent:#82C4F2; --on-accent:#0A2640; --kbd-on-accent:rgba(10,38,64,.1); --kbd-on-accent-ink:#154A73; --link:#8FCBF4; --accent-glow:rgba(130,196,242,.7); --tint:#1A2935}
+  :root[data-accent="leaf"]{--accent:#8FD49C; --on-accent:#0E3218; --kbd-on-accent:rgba(14,50,24,.1); --kbd-on-accent-ink:#1F5A30; --link:#9ADAA6; --accent-glow:rgba(143,212,156,.7); --tint:#1B2C20}
+  :root[data-accent="monarch"]{--accent:#F5A85A; --on-accent:#3A1A02; --kbd-on-accent:rgba(58,26,2,.1); --kbd-on-accent-ink:#6E3606; --link:#F7B36C; --accent-glow:rgba(245,168,90,.7); --tint:#33241A}
+}
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0}
 button,input,select{font:inherit;color:inherit}

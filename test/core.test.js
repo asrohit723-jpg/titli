@@ -246,16 +246,16 @@ test('quick notes: some just for one person, shown first for them only', async t
   const toAmma = rohit.s.circles.find(c => c.members[amma.me.id]).id, toAnu = rohit.s.circles.find(c => c.members[anu.me.id]).id;
 
   assert.ok(rohit.addQuick('Saaptiya?!', toAmma).ok);
-  assert.ok(rohit.addQuick('Call me when free', toAmma).ok);
+  assert.ok(rohit.addQuick('Did you sleep well?', toAmma).ok);
   assert.equal(rohit.addQuick('Saaptiya?!', toAmma).ok, false, 'no duplicates');
-  assert.equal(rohit.addQuick('Thinking of you', toAmma).ok, false, 'already in everyone’s notes');
+  assert.equal(rohit.addQuick('Reached home?', toAmma).ok, false, 'already in everyone’s notes');
   assert.ok(rohit.addQuick('Movie tonight?', toAnu).ok);
   const snap = rohit.snapshot();
-  assert.deepEqual(snap.quickFor[toAmma], ['Saaptiya?!', 'Call me when free']);
+  assert.deepEqual(snap.quickFor[toAmma], ['Saaptiya?!', 'Did you sleep well?']);
   assert.deepEqual(snap.quickFor[toAnu], ['Movie tonight?']);
   assert.ok(snap.quick.includes('Thinking of you') && !snap.quick.includes('Movie tonight?'), 'everyone’s list unchanged');
-  assert.ok(rohit.reorderQuick(['Call me when free', 'Saaptiya?!'], toAmma).ok);
-  assert.equal(rohit.snapshot().quickFor[toAmma][0], 'Call me when free');
+  assert.ok(rohit.reorderQuick(['Did you sleep well?', 'Saaptiya?!'], toAmma).ok);
+  assert.equal(rohit.snapshot().quickFor[toAmma][0], 'Did you sleep well?');
   rohit.removeQuick('Movie tonight?', toAnu);
   assert.equal(rohit.snapshot().quickFor[toAnu], undefined);
   for (let i = 0; i < 6; i++) rohit.addQuick(`Extra ${i}`, toAmma);
@@ -264,4 +264,58 @@ test('quick notes: some just for one person, shown first for them only', async t
   rohit.leave(toAmma);
   rohit._prune();
   assert.equal(rohit.s.quickFor[toAmma], undefined);
+});
+
+test('one-tap gestures: each person gets their own, and older versions still see a heart', async t => {
+  const { TitliCore: V1 } = require('./fixtures/v1/titli');
+  const ntfy = createMockNtfy();
+  const url = await ntfy.listen();
+  const rohit = makeCore(url, 'Rohit'), amma = makeCore(url, 'Amma');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-')), oldStore = new Store(path.join(dir, 'o.json')); oldStore.load();
+  oldStore.state.settings.relay = url;
+  const old = new V1({ store: oldStore, relay: new NtfyRelay({ server: url, watchdogMs: 3000 }) }); old.setName('Oldie'); old.start();
+  t.after(async () => { rohit.stop(); amma.stop(); old.stop(); await ntfy.close(); });
+  const inv = rohit.createInvite();
+  await until(() => rohit.relayStatus === 'online', 4000, 'online');
+  amma.joinCode(inv.code);
+  await until(() => rohit.s.circles.length === 1 && amma.s.circles.length === 1, 5000, 'paired');
+  const c = rohit.s.circles[0];
+  assert.equal(c.tap, 'wave', 'new people start with a wave');
+  assert.equal(rohit.snapshot().circles[0].tap, 'wave');
+  assert.ok(rohit.setTap(c.id, 'hug').ok);
+  assert.equal(rohit.setTap(c.id, 'kiss').ok, false);
+  rohit.send({ circleId: c.id, text: null });
+  await until(() => amma.s.inbox.length === 1, 4000, 'gesture arrives');
+  assert.equal(amma.s.inbox[0].g, 'hug');
+  assert.equal(rohit.snapshot().sent[0].g, 'hug');
+  amma.shown(amma.s.inbox[0].id);
+  assert.equal(amma.snapshot().received[0].g, 'hug');
+  assert.equal(amma.react(amma.s.received[0].id, '😂').ok, true, 'the new reactions');
+  // a 0.1.32 friend: what they send is a heart, and what we send them still lands (as a heart)
+  const inv2 = rohit.createInvite();
+  old.joinCode(inv2.code);
+  await until(() => rohit.s.circles.length === 2 && old.s.circles.length === 1, 5000, 'paired with old');
+  old.send({ circleId: old.s.circles[0].id, text: null });
+  await until(() => rohit.s.inbox.length === 1, 4000, 'old heart arrives');
+  assert.equal(rohit.s.inbox[0].g, 'heart');
+  rohit.send({ circleId: rohit.s.circles[1].id, text: null });
+  await until(() => old.s.inbox.length === 1, 4000, 'our wave reaches 0.1.32');
+  assert.equal(old.s.inbox[0].text, null);
+});
+
+test('people paired before gestures keep their hearts, and untouched old default notes are refreshed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-'));
+  const f = path.join(dir, 'titli.json');
+  const st = new Store(f); st.load();
+  st.state.circles.push({ id: 'abcdefgh', kind: 'pair', v: 2, name: 'Suresh', secret: 'ab'.repeat(32), topic: 'titli_x', members: {}, createdAt: 1 });
+  st.state.quick = ['Thinking of you', 'Saaptiya?', 'Drink some water 💧', 'Miss you already', 'Proud of you', 'Come home soon'];
+  st.saveNow();
+  const again = new Store(f); again.load();
+  assert.ok(!again.state.quick.includes('Miss you already') && again.state.quick.includes('Reached home?'));
+  const core = new TitliCore({ store: again, relay: new NtfyRelay({ server: 'http://127.0.0.1:9' }) });
+  assert.equal(core.s.circles[0].tap, 'heart');
+  // someone who edited their notes keeps them exactly
+  const own = new Store(path.join(dir, 'own.json')); own.load(); own.state.quick = ['Miss you already', 'Lunch?']; own.saveNow();
+  const ownAgain = new Store(path.join(dir, 'own.json')); ownAgain.load();
+  assert.deepEqual(ownAgain.state.quick, ['Miss you already', 'Lunch?']);
 });

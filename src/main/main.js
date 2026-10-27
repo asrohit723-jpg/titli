@@ -151,7 +151,8 @@ function quickMenu() {
   } else {
     const send = text => () => notifySent(core.send({ circleId: to.id, text, style: snap.settings.style }), to.name);
     items.push({ label: `Send to ${to.name}`, enabled: false });
-    items.push({ label: '♥  A heart', click: send(null) });
+    const GESTURE = { heart: '♥  A heart', hug: '🤗  A hug', wave: '👋  A wave', cheer: '🙌  A cheer' };
+    items.push({ label: GESTURE[to.tap] || GESTURE.heart, click: send(null) });
     // their own notes first, then the ones for everyone
     const notes = [...(snap.quickFor[to.id] || []), ...snap.quick.filter(q => !(snap.quickFor[to.id] || []).includes(q))];
     notes.forEach((q, i) => items.push({ label: q, accelerator: i < 9 ? String(i + 1) : undefined, click: send(q) }));
@@ -208,7 +209,7 @@ function togglePanel() {
 
 /* ---------------- talking to the panel ---------------- */
 
-const CORE_CALLS = new Set(['setName', 'setSettings', 'addQuick', 'removeQuick', 'reorderQuick', 'createInvite', 'createGroupInvite', 'cancelInvite', 'joinCode', 'createGroup', 'leave', 'removeMember', 'send']);
+const CORE_CALLS = new Set(['setName', 'setSettings', 'addQuick', 'removeQuick', 'reorderQuick', 'createInvite', 'createGroupInvite', 'cancelInvite', 'joinCode', 'createGroup', 'leave', 'removeMember', 'setTap', 'send']);
 
 function fullState() {
   const snap = core.snapshot();
@@ -288,12 +289,13 @@ function notifySent(r) {
 }
 
 function wireNotifications() {
-  core.on('reaction', ({ fromName, r, text }) => {
-    if (store.state.settings.notifyReactions) notify(`${fromName} reacted ${r}`, text ? `to “${text}”` : 'to your heart');
+  core.on('reaction', ({ fromName, r, text, g }) => {
+    const what = { heart: 'your heart', hug: 'your hug', wave: 'your wave', cheer: 'your cheer' };
+    if (store.state.settings.notifyReactions) notify(`${fromName} reacted ${r}`, text ? `to “${text}”` : `to ${what[g] || what.heart}`);
   });
   core.on('paired', ({ name }) => notify('Paired', `You and ${name} can send each other butterflies now.`));
   core.on('joined', ({ name, group }) => notify(group, `${name} joined the group.`));
-  core.on('unpaired', ({ name }) => notify('Titli', `${name} unpaired from you.`));
+  core.on('unpaired', ({ name }) => notify('Titli', `You and ${name} are no longer connected on Titli.`));
   core.on('joinedGroup', ({ group }) => notify(group, 'You’re in. Send the first butterfly.'));
   core.on('removed', ({ group }) => notify('Titli', `You’re no longer in ${group}.`));
 }
