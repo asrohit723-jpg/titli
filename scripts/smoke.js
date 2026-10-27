@@ -31,7 +31,9 @@ app.whenReady().then(async () => {
   t.preview('Thinking of you');
   await wait(1200);
   t.overlay.win.webContents.on('console-message', (_e, level, msg) => { if (level >= 2) errors.push('overlay: ' + msg); });
-  await wait(15000);
+  // the longest arrival is 10s of flight plus about 4.5s to land and open its wings
+  for (let i = 0; i < 40 && !seen.includes('shown'); i++) await wait(500);
+  await wait(1500);
   await save(t.overlay.win.webContents, 'overlay-landed.png');
   fs.writeFileSync(path.join(out, 'errors.txt'), errors.join('\n'));
   const ok = seen.includes('shown') && errors.length === 0;

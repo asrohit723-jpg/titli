@@ -387,10 +387,15 @@
   const uAtUp = (a, lo, hi) => DOWN + Math.acos(1 - 2 * clamp((a - lo) / (hi - lo), 0, 1)) / Math.PI * (1 - DOWN);
   const GLIDE_A = .62;  // wings held in a V while gliding
   const wing = { mode: 'hold', a: 1.3, aH: 1.3, prev: 1.3, flex: 0, u: 0, freq: 3.2, lo: -.25, hi: 1.08, phase: 'flap', flaps: 3, burstT: 0, glideT: 0, blend: 0, allowGlide: true, landing: false,
+    cruise: 3.2, glide: [1.0, 1.7], flapsR: [3, 4],
     bMid: .28, bAmp: .15, bPer: 6.5, bFrom: 0, bt: 1, fu: 0, fEnd: 0, fSpeed: 2.6 };
-  function startFly(freq) {
-    wing.mode = 'fly'; wing.freq = freq || 3.2; wing.allowGlide = true; wing.landing = false;
-    wing.phase = 'flap'; wing.flaps = 3; wing.blend = 0;
+  const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  // mood (calm, easy or playful) sets the beat rate, how many beats in a burst and how long the glides last
+  function startFly(mood) {
+    mood = mood || { freq: 3.2, glide: [1.0, 1.7], flaps: [3, 4] };
+    wing.mode = 'fly'; wing.freq = wing.cruise = mood.freq; wing.glide = mood.glide; wing.flapsR = mood.flaps;
+    wing.allowGlide = true; wing.landing = false;
+    wing.phase = 'flap'; wing.flaps = randInt(wing.flapsR[0], wing.flapsR[1]); wing.blend = 0;
     wing.u = uAtUp(clamp(wing.a, wing.lo, wing.hi), wing.lo, wing.hi) % 1;
   }
   function breathe(mid, amp, per) { wing.mode = 'breathe'; wing.bFrom = wing.a; wing.bt = 0; wing.bMid = mid; wing.bAmp = amp; wing.bPer = per; }
@@ -404,7 +409,8 @@
   }
 
   // Flight state: the body follows the path with lag, bounces with the beats, pitches with the stroke and banks into turns.
-  const fly = { active: false, curve: null, u: 0, base: new THREE.Vector3(), last: new THREE.Vector3(), bob: 0, bobV: 0, heading: 0, headV: 0, roll: 0, rollV: 0, pitch: 0, settle: 1, landBlend: 0, landHeading: null, lift: 0 };
+  const fly = { active: false, curve: null, u: 0, base: new THREE.Vector3(), last: new THREE.Vector3(), bob: 0, bobV: 0, heading: 0, headV: 0, roll: 0, rollV: 0, pitch: 0, settle: 1, landBlend: 0, landHeading: null, lift: 0,
+    weave: { a: .71, b: 1.37, pa: 0, pb: 1.3, amp: .18 } };
   // critically damped spring step, returns [x, v]
   function spring(x, v, target, omega, dt) {
     const f = 1 + 2 * dt * omega, oo = omega * omega, hoo = dt * oo, hhoo = dt * hoo, inv = 1 / (f + hhoo);
@@ -439,7 +445,7 @@
         // leave the flap at the top of the upstroke, so the wings are already near the glide pose
         const ug = uAtUp(GLIDE_A, wing.lo, wing.hi);
         if (wing.allowGlide && wing.flaps <= 0 && prevU < ug && wing.u >= ug) {
-          wing.phase = 'glide'; wing.glideT = rand(1.0, 1.7); wing.blend = 0;
+          wing.phase = 'glide'; wing.glideT = rand(wing.glide[0], wing.glide[1]); wing.blend = 0;
         }
         strokeU = wing.u;
         const target = strokeA(wing.u, wing.lo, wing.hi), targetH = strokeA((wing.u + .93) % 1, wing.lo, wing.hi);
@@ -452,7 +458,7 @@
         const breathe_ = Math.sin(t * 2.1) * .035 + Math.sin(t * 3.3) * .015;
         wing.a += (GLIDE_A + breathe_ - wing.a) * Math.min(1, dt * 5);
         wing.aH += (GLIDE_A - .08 + breathe_ * .8 - wing.aH) * Math.min(1, dt * 5);
-        if (wing.glideT <= 0 || !wing.allowGlide) { wing.phase = 'flap'; wing.flaps = 3 + Math.floor(Math.random() * 2); wing.u = uAtUp(wing.a, wing.lo, wing.hi); wing.blend = 0; }
+        if (wing.glideT <= 0 || !wing.allowGlide) { wing.phase = 'flap'; wing.flaps = randInt(wing.flapsR[0], wing.flapsR[1]); wing.u = uAtUp(wing.a, wing.lo, wing.hi); wing.blend = 0; }
       }
     } else if (wing.mode === 'flutter') {
       wing.fu = (wing.fu + dt * wing.fSpeed) % 1;
@@ -484,8 +490,8 @@
       fly.bob += fly.bobV * dt; fly.bob -= fly.bob * Math.min(1, dt * .9);
       fly.bob = clamp(fly.bob, -S * 1.6, S * 1.6);
       const st = fly.settle;
-      // a slow weave, so it never tracks the path like a train
-      const wx = (Math.sin(t * .71) * .6 + Math.sin(t * 1.37 + 1.3) * .4) * S * .18;
+      // a slow weave, so it never tracks the path like a train (its rhythm changes every flight)
+      const wv = fly.weave, wx = (Math.sin(t * wv.a + wv.pa) * .6 + Math.sin(t * wv.b + wv.pb) * .4) * S * wv.amp;
       bfly.position.set(fly.base.x + wx * st, fly.base.y + fly.bob * st, fly.base.z);
 
       // heading: look a little ahead along the path, so the turn is anticipated rather than chased
@@ -533,8 +539,9 @@
   function kick() { if (running) return; running = true; last = performance.now(); requestAnimationFrame(frame); }
 
   /* ---------- unhurried flight paths ---------- */
-  function flyAlong(curve, dur, ease, landHeading, fromPerch) {
+  function flyAlong(curve, dur, ease, landHeading, fromPerch, mood) {
     const p0 = curve.getPointAt(0);
+    fly.weave = { a: rand(.55, .85), b: rand(1.15, 1.6), pa: rand(0, 6.28), pb: rand(0, 6.28), amp: rand(.14, .22) * ((mood && mood.weave) || 1) };
     fly.curve = curve; fly.u = 0;
     fly.base.copy(p0); fly.last.copy(p0);
     fly.bob = 0; fly.bobV = 0; fly.lift = 0; fly.rollV = 0; fly.headV = 0;
@@ -548,7 +555,7 @@
       const rampIn = fromPerch ? smooth01(u / .14) : 1;
       const landS = fly.landHeading !== null ? 1 - smooth01((u - .72) / .28) : 1;
       fly.settle = Math.min(rampIn, landS); fly.landBlend = 1 - landS;
-      if (fly.landHeading !== null) { wing.allowGlide = u < .92; wing.freq = lerp(3.2, 2.7, smooth01((u - .85) / .15)); }
+      if (fly.landHeading !== null) { wing.allowGlide = u < .92; wing.freq = lerp(wing.cruise, 2.7, smooth01((u - .85) / .15)); }
     }, ease);
   }
   async function settleOnto(P, heading, alive) {
@@ -564,21 +571,24 @@
       tween(800, k => { wing.a = lerp(a0, 1.3, k); })
     ]);
   }
-  const V = (x, y, z) => new THREE.Vector3(x, y, z || 0);
-  // wide, lazy arcs: nothing tighter than a butterfly would actually turn
-  function entryCurve(P) {
-    return new THREE.CatmullRomCurve3([
-      V(W * .6, P.y - H * .5, D * .03), V(W * .3, P.y - H * .6, D * .04), V(-W * .02, P.y - H * .52, D * .04), V(-W * .22, P.y - H * .34, D * .04), V(-W * .24, P.y - H * .12, D * .035),
-      V(-W * .08, P.y + H * .02, D * .03), V(P.x - W * .3, P.y + H * .04, D * .022), V(P.x - W * .12, P.y + S * 2.4, D * .012), V(P.x - S * 1.2, P.y + S * .9, D * .004), P.clone()
-    ], false, 'centripetal');
-  }
-  function exitCurve() {
-    const c = bfly.position.clone();
-    return new THREE.CatmullRomCurve3([c, V(c.x - S * 2, c.y + S * 1.6, D * .008), V(c.x - W * .14, c.y + S * .4, D * .02), V(c.x - W * .3, c.y - H * .1, D * .03), V(c.x - W * .42, c.y + H * .1, D * .035), V(c.x - W * .34, H * .84, D * .04)], false, 'centripetal');
-  }
-  function hopCurve(P) {
-    const c = bfly.position.clone();
-    return new THREE.CatmullRomCurve3([c, V(c.x - W * .08, c.y + H * .14, D * .015), V(c.x - W * .26, c.y + H * .08, D * .025), V(P.x - W * .3, P.y - H * .22, D * .025), V(P.x - W * .12, P.y + S * 2, D * .012), V(P.x - S * 1.2, P.y + S * .9, D * .004), P.clone()], false, 'centripetal');
+  /* ---------- a different route every visit (the routes themselves are in flight-paths.js) ---------- */
+  const Flight = window.TitliFlight;
+  const flightLog = (() => {
+    let mem = { entry: [], exit: [] };
+    try { const v = JSON.parse(localStorage.getItem('titli.flights') || 'null'); if (v && Array.isArray(v.entry) && Array.isArray(v.exit)) mem = v; } catch (_) {}
+    return {
+      recent: (kind, n) => mem[kind].slice(-n),
+      add(kind, name) { mem[kind] = mem[kind].concat(name).slice(-6); try { localStorage.setItem('titli.flights', JSON.stringify(mem)); } catch (_) {} },
+    };
+  })();
+  function route(kind, at) {
+    const r = Flight.plan(kind, {
+      W, H, S, D, menubar: MENUBAR, at: { x: at.x, y: at.y, z: at.z || 0 },
+      recent: flightLog.recent(kind, kind === 'entry' ? 3 : 2),   // never one of the last few
+      makeCurve: pts => Flight.makeCurve(THREE, D, pts),
+    });
+    flightLog.add(kind, r.name);
+    return r;
   }
 
   /* ======================================================================
@@ -603,10 +613,11 @@
     applyStyle(item.style || 'rose');
     state = 'flying'; perchMode = 'corner';
     const P = pxToWorld(perchPx('corner')), H0 = perchHeading('corner');
-    bfly.visible = true; wing.a = .9; startFly(3.2); glints = true; kick();
+    const way = reduce ? null : route('entry', P);
+    bfly.visible = true; wing.a = .9; startFly(way && way.mood); glints = true; kick();
     if (reduce) placeNow(P, H0);
     else {
-      await flyAlong(entryCurve(P), 8400, k => Math.sin(k * Math.PI / 2), H0, false); if (!alive()) return;
+      await flyAlong(way.curve, way.duration, k => Math.sin(k * Math.PI / 2), H0, false, way.mood); if (!alive()) return;
       glints = false;
       await settleOnto(P, H0, alive); if (!alive()) return;
     }
@@ -633,8 +644,9 @@
     await wait(400); if (!alive()) return;
     wing.mode = 'hold'; const a0 = wing.a;
     await tween(600, k => { wing.a = lerp(a0, 1.0, k); }); if (!alive()) return;
-    startFly(3.2); glints = true;
-    if (!reduce) { await flyAlong(exitCurve(), 7000, k => Math.pow(k, 1.5), null, true); if (!alive()) return; }
+    const way = reduce ? null : route('exit', bfly.position);
+    startFly(way && way.mood); glints = true;
+    if (!reduce) { await flyAlong(way.curve, way.duration, k => Math.pow(k, 1.5), null, true, way.mood); if (!alive()) return; }
     finish('done', item.id);
   }
 

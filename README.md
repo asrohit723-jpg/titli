@@ -12,6 +12,7 @@ and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 - **Quick notes**: save up to 12 short notes (60 characters max), reorder them, and send one with a click, a number key, or from the menu-bar icon's right-click menu.
 - **One-to-one or groups**: pair with one person, or make a group where everyone gets the butterfly.
 - **Never at a bad moment**: butterflies wait while you're on a call (camera or mic in use), something is full screen, the screen is locked, the laptop is asleep, or you've stepped away. They're also invisible to screen sharing and recordings.
+- **A different flight every time**: it arrives one of 8 ways (a wide sweep, a lazy loop, a figure eight, a dive, a fly-by from beside you...) and leaves one of 6, each re-shaped on every visit and flown in a calm, easy or playful mood. It never repeats its last few routes.
 - **Activity**: everything you sent and received in one timeline, with seen receipts and reactions.
 - **No accounts**: everything stays on your computer. Butterflies travel through a free relay ([ntfy](https://ntfy.sh)), encrypted on your laptop so the relay can't read them.
 
@@ -107,6 +108,7 @@ workflow artifact; it just isn't published as an update.
 | Updates (check, download, verify, swap) | `src/main/updater.js`, `src/core/update-manifest.js` |
 | The see-through window the butterfly flies in | `src/main/overlay.js`, `src/renderer/overlay/` |
 | The 3D butterfly | `src/renderer/overlay/overlay.js` (three.js) |
+| Its flight routes (planned and checked for smooth turns) | `src/renderer/overlay/flight-paths.js` |
 
 **Pairing.** An invite code (`P…`) is single-use. When the other person enters it, their Titli posts
 "join" on a channel derived from the code; yours answers "welcome" with a fresh random secret for the
