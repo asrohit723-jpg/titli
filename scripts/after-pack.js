@@ -13,7 +13,7 @@ exports.default = async function afterPack(context) {
   if (/-temp$/.test(path.basename(context.appOutDir))) return; // halves of a universal build, merged later
   if (process.env.CSC_LINK || process.env.CSC_NAME) return;     // a real certificate will sign it instead
   const app = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
-  const id = process.env.TITLI_SIGN_IDENTITY;
-  execFileSync('codesign', ['--force', '--deep', '--sign', id || '-', app], { stdio: 'inherit' });
+  const id = process.env.TITLI_SIGN_IDENTITY, kc = process.env.TITLI_SIGN_KEYCHAIN;
+  execFileSync('codesign', ['--force', '--deep', '--sign', id || '-', ...(id && kc ? ['--keychain', kc] : []), app], { stdio: 'inherit' });
   if (id) execFileSync('codesign', ['-dv', '--verbose=2', app], { stdio: 'inherit' });
 };

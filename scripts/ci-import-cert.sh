@@ -16,6 +16,12 @@ sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains
   || echo "::warning::Couldn't mark the signing certificate as trusted on the build machine"
 ID="$(security find-identity -p codesigning "$KC" | awk '/Titli Self-Signed/ {print $2; exit}')"
 test -n "$ID" || { echo "::error::The signing certificate didn't import"; exit 1; }
+# prove it signs before anything depends on it
+cp /usr/bin/true "$RUNNER_TEMP/titli-sign-probe"
+if ! out="$(codesign --force --sign "$ID" --keychain "$KC" "$RUNNER_TEMP/titli-sign-probe" 2>&1)"; then
+  echo "::error::codesign can't use the certificate: $out | $(security find-identity -p codesigning "$KC" | tr '\n' ' ') | search list: $(security list-keychains -d user | tr '\n' ' ')"
+  exit 1
+fi
 echo "TITLI_SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
 echo "TITLI_SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"
 echo "signing identity $ID"
