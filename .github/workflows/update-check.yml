@@ -9,6 +9,11 @@ name: Update check
 #   untrusted: that signature checks out on a Mac that has never seen the certificate (what the updater checks)
 on:
   workflow_dispatch:
+    inputs:
+      from:
+        description: Build the older Titli from this commit (empty = this code)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -41,6 +46,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { ref: '${{ inputs.from }}' }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 20, cache: npm }
       - run: npm ci
