@@ -3,23 +3,45 @@
 // Pure Node, no Electron, so it can be tested on its own.
 //
 // Every circle (a pair or a group) has a random secret. Its relay topic and its encryption key are
-// derived from that secret, and only members know it.
-//   Pair:  you make a single-use invite code. When the other person enters it, their app posts
-//          "join" on the invite's channel, your app answers "welcome" with a fresh circle secret,
-//          and the invite is used up.
-//   Group: the group code is the group's secret, so anyone with the code can join, any time.
+// derived from that secret, and only members know it. Every device also has its own signing key
+// (see identity.js): everything it sends is signed, and once we know someone's key we only accept
+// messages signed by it. Nobody can send as someone else, even from inside a group.
+//
+//   Pair:  you make a single-use invite code. The other person's app posts "join" with a one-off public
+//          key on the invite's channel; your app answers "welcome" with its own. Both work out the
+//          pair's secret from the two keys (X25519), so someone who only saw the code learns nothing.
+//          Pairs made by Titli 0.1.32 and earlier upgrade the same way, over their old channel, as soon
+//          as both people have updated.
+//   Group: a group code (H…) is an invite that lasts 24 hours. Whoever made it answers each joiner with
+//          the group's secret, sealed so only that joiner can open it. When someone leaves or the owner
+//          removes them, the owner makes a new secret and hands it to everyone else, so they're out.
+//          Old groups (G… codes, where the code was the secret) switch over once everyone has updated.
 
 const { EventEmitter } = require('events');
 const codes = require('./codes');
 const { seal, open } = require('./seal');
+const identity = require('./identity');
 
 const MAX_TEXT = 60, MAX_NAME = 24, MAX_QUICK = 12, MAX_SENT = 40, MAX_RECEIVED = 100, MAX_HANDLED = 800, MAX_INBOX = 50, MAX_INVITES = 5;
-const INVITE_TTL = 24 * 3600 * 1000, USED_INVITE_TTL = 10 * 60 * 1000;
+const MAX_MEMBERS = 30;
+const HOUR = 3600 * 1000, DAY = 24 * HOUR;
+const INVITE_TTL = DAY, USED_INVITE_TTL = 10 * 60 * 1000;
+// after a key change, keep listening on the old channel for stragglers (the owner longer, to help anyone who missed it)
+const KEEP_OLD_KEY = DAY, KEEP_OLD_KEY_OWNER = 7 * DAY;
+// the relay keeps messages for 12 hours; anything claiming to be much older (or from the future) is a replay
+const MAX_AGE = 14 * HOUR, MAX_SKEW = 10 * 60 * 1000;
 const STYLES = ['rose', 'peony', 'gold', 'midnight'];
 const REACTIONS = ['❤️', '🥰', '😘', '🤗', '😊', 'butterfly'];
 const RANK = { sending: 0, sent: 1, arrived: 2, seen: 3 };
+const ANNOUNCE = ['hello', 'hi', 'upgrade'];   // messages that introduce the sender's keys
 
-const clip = (t, n) => Array.from(String(t == null ? '' : t).replace(/\s+/g, ' ').trim()).slice(0, n).join('');
+// control characters, invisible and right-to-left marks people could use to disguise a name or a note
+const HIDDEN = /[\u0000-\u001f\u007f-\u009f­؜᠎​‌‎‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+const clip = (t, n) => Array.from(String(t == null ? '' : t).replace(HIDDEN, '').replace(/\s+/g, ' ').trim()).slice(0, n).join('');
+const isHex64 = s => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
+const isId = s => typeof s === 'string' && /^[A-Za-z0-9_-]{6,40}$/.test(s);
+const payloadOf = msg => { const { sig, ...p } = msg; return p; };
+const relayOk = url => /^https:\/\/[^\s/]+/.test(url) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url);
 
 class TitliCore extends EventEmitter {
   constructor({ store, relay, now = () => Date.now() }) {
@@ -28,7 +50,13 @@ class TitliCore extends EventEmitter {
     this.relay = relay;
     this.now = now;
     this.relayStatus = 'idle';
-    this._keys = new Map(); // topic -> { key, kind, ref }
+    this._keys = new Map(); // topic -> { key, kind, ref, old }
+    this._resynced = new Map();
+    if (!identity.validIdentity(this.me.keys)) { this.me.keys = identity.newIdentity(); this.store.save(); }
+    if (!relayOk(this.s.settings.relay)) this.s.settings.relay = 'https://ntfy.sh';
+    if (typeof this.s.settings.sendReceipts !== 'boolean') this.s.settings.sendReceipts = true;
+    // circles saved by older versions don't list our keys in our own entry
+    for (const c of this.s.circles) if (c.members && c.members[this.me.id]) c.members[this.me.id] = { ...c.members[this.me.id], ...this._pub };
     this._handled = new Set(this.s.handled);
     relay.restoreState(this.s.relayCaught);
     relay.on('message', m => this._onRelay(m));
@@ -42,12 +70,14 @@ class TitliCore extends EventEmitter {
 
   get s() { return this.store.state; }
   get me() { return this.s.me; }
+  get _pub() { return { pub: this.me.keys.sign.pub, xpub: this.me.keys.box.pub }; }
 
   start() {
     this._prune();
     this._syncTopics();
     this.relay.setServer(this.s.settings.relay);
     this.relay.start();
+    this._announce();
     this._timer = setInterval(() => { this.flushOutbox(); this._prune(); }, 30000);
   }
 
@@ -65,18 +95,19 @@ class TitliCore extends EventEmitter {
     if (!n) return { ok: false, error: 'Type the name people should see.' };
     const changed = n !== this.me.name;
     this.me.name = n;
+    for (const c of this.s.circles) if (c.members[this.me.id]) c.members[this.me.id].name = n;
     this._save();
-    if (changed) for (const c of this.s.circles) this._postCircle(c, { t: 'hi', gname: c.kind === 'group' && !c.nameUnknown ? c.name : undefined });
+    if (changed) for (const c of this.s.circles) this._postCircle(c, { t: 'hi', ...this._pub, gname: c.kind === 'group' && !c.nameUnknown ? c.name : undefined });
     return { ok: true };
   }
 
   setSettings(patch = {}) {
     const st = this.s.settings;
-    for (const k of ['holdInMeetings', 'holdWhenAway', 'notifyReactions', 'openAtLogin', 'allowCapture']) if (typeof patch[k] === 'boolean') st[k] = patch[k];
+    for (const k of ['holdInMeetings', 'holdWhenAway', 'notifyReactions', 'openAtLogin', 'allowCapture', 'sendReceipts']) if (typeof patch[k] === 'boolean') st[k] = patch[k];
     if (STYLES.includes(patch.style)) st.style = patch.style;
     if (typeof patch.relay === 'string') {
       const url = patch.relay.trim().replace(/\/+$/, '');
-      if (!/^https?:\/\/[^\s/]+/.test(url)) return { ok: false, error: 'The relay address should start with https://' };
+      if (!relayOk(url)) return { ok: false, error: 'The relay address should start with https://' };
       st.relay = url; this.relay.setServer(url);
     }
     this._save();
@@ -111,12 +142,26 @@ class TitliCore extends EventEmitter {
   /* ---------------- pairing & groups ---------------- */
 
   createInvite() {
-    const open = this.s.invites.filter(i => !i.circleId);
+    const open = this.s.invites.filter(i => i.kind !== 'group' && !i.circleId);
     if (open.length >= MAX_INVITES) return { ok: true, code: open[open.length - 1].code };
     const c = codes.randomCode('pair');
-    this.s.invites.push({ code: c.code, raw: c.raw, createdAt: this.now(), since: this._nowSec() - 5 });
+    this.s.invites.push({ kind: 'pair', code: c.code, raw: c.raw, eph: identity.ephemeral(), createdAt: this.now(), since: this._nowSec() - 5 });
     this._syncTopics(); this._save();
     return { ok: true, code: c.code };
+  }
+
+  // a 24-hour code for one of your groups; whoever enters it gets the group's key from your Titli
+  createGroupInvite(circleId) {
+    const c = this._circle(circleId);
+    if (!c || c.kind !== 'group') return { ok: false, error: 'That group is gone.' };
+    if (c.v !== 2) return { ok: true, code: c.code };   // an old group's code still works until it switches over
+    const now = this.now();
+    const live = this.s.invites.find(i => i.kind === 'group' && i.circleId === c.id && now - i.createdAt < INVITE_TTL - HOUR);
+    if (live) return { ok: true, code: live.code };
+    const code = codes.randomCode('group');
+    this.s.invites.push({ kind: 'group', code: code.code, raw: code.raw, circleId: c.id, answered: {}, createdAt: now, since: this._nowSec() - 5 });
+    this._syncTopics(); this._save();
+    return { ok: true, code: code.code };
   }
 
   cancelInvite(code) {
@@ -129,23 +174,28 @@ class TitliCore extends EventEmitter {
     const p = codes.parseCode(input);
     if (!p) return { ok: false, error: "That doesn't look like a Titli code. Codes look like P7QM-2XPA-9DRT-4HWN." };
     if (!this.me.name) return { ok: false, error: 'Add your name first, so they know who you are.' };
-    if (p.kind === 'pair') {
-      if (this.s.invites.some(i => i.raw === p.raw)) return { ok: false, error: "That's your own invite code. Send it to the other person instead." };
-      if (!this.s.joining.some(j => j.raw === p.raw)) {
-        this.s.joining.push({ code: p.code, raw: p.raw, createdAt: this.now(), since: this._nowSec() - 5 });
-        this._syncTopics(); this._save();
-      }
-      this._sendJoin(this.s.joining.find(j => j.raw === p.raw));
-      return { ok: true, kind: 'pair', pending: true };
+    if (this.s.invites.some(i => i.raw === p.raw)) return { ok: false, error: "That's your own code. Send it to the other person instead." };
+    if (p.kind === 'legacyGroup') return this._joinLegacyGroup(p);
+    const already = this.s.circles.find(c => c.joinedWith === p.raw);
+    if (already) return { ok: false, error: `You're already in ${already.name}.` };
+    if (!this.s.joining.some(j => j.raw === p.raw)) {
+      this.s.joining.push({ kind: p.kind, code: p.code, raw: p.raw, eph: identity.ephemeral(), createdAt: this.now(), since: this._nowSec() - 5 });
+      this._syncTopics(); this._save();
     }
+    this._sendJoin(this.s.joining.find(j => j.raw === p.raw));
+    return { ok: true, kind: p.kind, pending: true };
+  }
+
+  // G… codes come from Titli 0.1.32 and earlier: the code is the group's secret
+  _joinLegacyGroup(p) {
     const secret = codes.groupSecret(p.raw);
     const topic = codes.topicFor(Buffer.from(secret, 'hex'));
     const existing = this.s.circles.find(c => c.topic === topic);
     if (existing) return { ok: false, error: `You're already in ${existing.name}.` };
-    const c = { id: codes.newId(), kind: 'group', name: 'New group', nameUnknown: true, code: p.code, secret, topic, members: { [this.me.id]: { name: this.me.name } }, createdAt: this.now(), since: this._nowSec() - 5 };
+    const c = { id: codes.newId(), kind: 'group', v: 1, name: 'New group', nameUnknown: true, code: p.code, secret, topic, members: { [this.me.id]: this._meMember() }, createdAt: this.now(), since: this._nowSec() - 5 };
     this.s.circles.push(c);
     this._syncTopics(); this._save();
-    this._postCircle(c, { t: 'hello' });
+    this._postCircle(c, { t: 'hello', ...this._pub });
     return { ok: true, kind: 'group', circleId: c.id };
   }
 
@@ -153,21 +203,40 @@ class TitliCore extends EventEmitter {
     const n = clip(name, MAX_NAME);
     if (!n) return { ok: false, error: 'Give the group a name first.' };
     if (this.s.circles.some(c => c.kind === 'group' && c.name.toLowerCase() === n.toLowerCase())) return { ok: false, error: 'You already have a group with that name.' };
-    const code = codes.randomCode('group');
-    const secret = codes.groupSecret(code.raw);
-    const c = { id: codes.newId(), kind: 'group', name: n, code: code.code, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: { name: this.me.name } }, owner: this.me.id, createdAt: this.now(), since: this._nowSec() - 5 };
+    const secret = codes.newSecret();
+    const c = { id: codes.newId(), kind: 'group', v: 2, epoch: 0, name: n, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember() }, owner: this.me.id, createdAt: this.now(), since: this._nowSec() - 5 };
     this.s.circles.push(c);
     this._syncTopics(); this._save();
-    return { ok: true, code: code.code, circleId: c.id };
+    const inv = this.createGroupInvite(c.id);
+    return { ok: true, code: inv.code, circleId: c.id };
   }
 
   leave(circleId) {
     const c = this._circle(circleId);
     if (!c) return { ok: false, error: 'That person or group is already gone.' };
-    this._postCircle(c, { t: 'bye' });
-    this.s.circles = this.s.circles.filter(x => x !== c);
+    const others = Object.keys(c.members).filter(id => id !== this.me.id);
+    if (c.kind === 'group' && c.v === 2 && c.owner === this.me.id && others.some(id => identity.isKey(c.members[id].xpub))) {
+      // hand the group over: a new key for everyone else, and the next person in line becomes its owner
+      const next = others.filter(id => identity.isKey(c.members[id].xpub)).sort()[0];
+      this._rekey(c, { exclude: [this.me.id], owner: next });
+    } else {
+      this._postCircle(c, { t: 'bye' });
+      this.s.circles = this.s.circles.filter(x => x !== c);
+    }
+    this.s.invites = this.s.invites.filter(i => i.circleId !== c.id);
     // give the goodbye a moment to go out before we stop listening
     setTimeout(() => this._syncTopics(), 1500);
+    this._save();
+    return { ok: true };
+  }
+
+  // the group's owner can take someone out; everyone else gets a new key they don't
+  removeMember(circleId, memberId) {
+    const c = this._circle(circleId);
+    if (!c || c.kind !== 'group') return { ok: false, error: 'That group is gone.' };
+    if (c.owner !== this.me.id) return { ok: false, error: 'Only the person who made the group can remove people.' };
+    if (memberId === this.me.id || !c.members[memberId]) return { ok: false, error: 'They’re not in the group.' };
+    this._rekey(c, { exclude: [memberId] });
     this._save();
     return { ok: true };
   }
@@ -203,7 +272,7 @@ class TitliCore extends EventEmitter {
     item.shownAt = this.now();
     this.s.received.unshift(item);
     this.s.received.length = Math.min(this.s.received.length, MAX_RECEIVED);
-    if (item.kind === 'note') { const c = this._circle(item.circleId); if (c) this._postCircle(c, { t: 'seen', id: item.id }); }
+    if (item.kind === 'note' && this.s.settings.sendReceipts) { const c = this._circle(item.circleId); if (c) this._postCircle(c, { t: 'seen', id: item.id }); }
     this._save(); this.emit('inbox');
   }
 
@@ -221,21 +290,39 @@ class TitliCore extends EventEmitter {
   /* ---------------- what the panel sees (no secrets) ---------------- */
 
   snapshot() {
-    const me = this.me;
-    const circleName = c => c.kind === 'pair' ? (Object.entries(c.members).find(([id]) => id !== me.id) || [null, { name: c.name }])[1].name || c.name : c.name;
-    const circles = this.s.circles.map(c => ({
-      id: c.id, kind: c.kind, name: circleName(c),
-      members: Object.entries(c.members).filter(([id]) => id !== me.id).map(([, m]) => m.name || 'Someone'),
-      code: c.kind === 'group' ? c.code : undefined, owner: c.owner === me.id, createdAt: c.createdAt || null
-    }));
+    const me = this.me, now = this.now();
+    const others = c => Object.entries(c.members).filter(([id]) => id !== me.id);
+    const circleName = c => c.kind === 'pair' ? ((others(c)[0] || [null, { name: c.name }])[1].name || c.name) : c.name;
+    const groupCode = c => {
+      if (c.v !== 2) return c.code ? { code: c.code, expiresAt: null } : null;
+      const inv = this.s.invites.filter(i => i.kind === 'group' && i.circleId === c.id && now - i.createdAt < INVITE_TTL).pop();
+      return inv ? { code: inv.code, expiresAt: inv.createdAt + INVITE_TTL } : null;
+    };
+    const circles = this.s.circles.map(c => {
+      const os = others(c), gc = c.kind === 'group' ? groupCode(c) : null;
+      // two people in one group with the same name get a short tag from their key, so they can't pass as each other
+      const counts = {};
+      for (const [, m] of os) { const k = (m.name || '').toLowerCase(); counts[k] = (counts[k] || 0) + 1; }
+      const label = (id, m) => (m.name || 'Someone') + (counts[(m.name || '').toLowerCase()] > 1 ? ` (${(m.pub || id).slice(0, 4)})` : '');
+      return {
+        id: c.id, kind: c.kind, name: circleName(c),
+        members: os.map(([id, m]) => label(id, m)),
+        people: os.map(([id, m]) => ({ id, name: label(id, m) })),
+        code: gc ? gc.code : undefined, codeExpiresAt: gc ? gc.expiresAt : undefined, legacyCode: c.kind === 'group' && c.v !== 2,
+        owner: c.owner === me.id, createdAt: c.createdAt || null,
+        // fully protected: the new key exchange is done and we know everyone's signing key
+        secure: c.v === 2 && os.every(([, m]) => identity.isKey(m.pub)),
+        safety: identity.safetyCode(c.secret, c.kind === 'group' ? `group|${c.id}|${c.epoch || 0}` : 'pair')
+      };
+    });
     const nameOf = id => { const c = circles.find(x => x.id === id); return c ? c.name : 'Someone'; };
     return {
       me: { name: me.name },
       settings: { ...this.s.settings },
       relayStatus: this.relayStatus,
       circles,
-      invites: this.s.invites.filter(i => !i.circleId).map(i => ({ code: i.code, createdAt: i.createdAt })),
-      joining: this.s.joining.map(j => ({ code: j.code, createdAt: j.createdAt })),
+      invites: this.s.invites.filter(i => i.kind !== 'group' && !i.circleId).map(i => ({ code: i.code, createdAt: i.createdAt })),
+      joining: this.s.joining.map(j => ({ code: j.code, kind: j.kind, createdAt: j.createdAt })),
       quick: this.s.quick.slice(),
       sent: this.s.sent.slice(0, 20).map(m => ({ id: m.id, circleId: m.circleId, text: m.text, at: m.at, to: nameOf(m.circleId), status: this._statusOf(m) })),
       received: this.s.received.filter(r => !r.preview).slice(0, 20).map(r => ({ id: r.id, kind: r.kind, circleId: r.circleId, text: r.text, fromName: r.fromName, circleName: r.circleName, at: r.at, react: r.react || null })),
@@ -245,6 +332,8 @@ class TitliCore extends EventEmitter {
   }
 
   /* ---------------- internals ---------------- */
+
+  _meMember() { return { name: this.me.name, ...this._pub }; }
 
   _statusOf(m) {
     const c = this._circle(m.circleId);
@@ -270,21 +359,21 @@ class TitliCore extends EventEmitter {
   _nowSec() { return Math.floor(this.now() / 1000); }
 
   _syncTopics() {
-    const map = new Map();
+    const map = new Map(), now = this.now();
     this._keys.clear();
+    const add = (topic, since, entry) => { this._keys.set(topic, entry); map.set(topic, since || 0); };
     for (const c of this.s.circles) {
-      this._keys.set(c.topic, { kind: 'circle', ref: c.id, key: codes.keyFor(Buffer.from(c.secret, 'hex')) });
-      map.set(c.topic, c.since || 0);
+      add(c.topic, c.since, { kind: 'circle', ref: c.id, key: codes.keyFor(Buffer.from(c.secret, 'hex')) });
+      c.old = (c.old || []).filter(o => o.until > now);
+      for (const o of c.old) add(o.topic, o.since, { kind: 'circle', ref: c.id, old: true, key: codes.keyFor(Buffer.from(o.secret, 'hex')) });
     }
     for (const i of this.s.invites) {
-      const sec = codes.inviteSecret(i.raw), topic = codes.topicFor(sec);
-      this._keys.set(topic, { kind: 'invite', ref: i.raw, key: codes.keyFor(sec) });
-      map.set(topic, i.since || 0);
+      const sec = codes.inviteSecret(i.raw);
+      add(codes.topicFor(sec), i.since, { kind: 'invite', ref: i.raw, key: codes.keyFor(sec) });
     }
     for (const j of this.s.joining) {
-      const sec = codes.inviteSecret(j.raw), topic = codes.topicFor(sec);
-      this._keys.set(topic, { kind: 'joining', ref: j.raw, key: codes.keyFor(sec) });
-      map.set(topic, j.since || 0);
+      const sec = codes.inviteSecret(j.raw);
+      add(codes.topicFor(sec), j.since, { kind: 'joining', ref: j.raw, key: codes.keyFor(sec) });
     }
     this.relay.setTopics(map);
   }
@@ -299,74 +388,182 @@ class TitliCore extends EventEmitter {
     const k = this._keys.get(topic);
     if (!k) return;
     const msg = open(k.key, body);
-    if (!msg || typeof msg.t !== 'string' || !msg.from || msg.from === this.me.id) return;
+    if (!msg || typeof msg.t !== 'string' || !isId(msg.from) || msg.from === this.me.id) return;
+    // too old or from the future: a replay of something the relay saw before
+    if (msg.ts != null) { const ts = Number(msg.ts), now = this.now(); if (!(ts > now - MAX_AGE && ts < now + MAX_SKEW)) return; }
     try {
-      if (k.kind === 'invite') this._onInvite(this.s.invites.find(i => i.raw === k.ref), msg);
-      else if (k.kind === 'joining') this._onJoining(this.s.joining.find(j => j.raw === k.ref), msg, time);
-      else this._onCircle(this._circle(k.ref), msg, time);
+      if (k.kind === 'invite') this._onInvite(this.s.invites.find(i => i.raw === k.ref), msg, topic);
+      else if (k.kind === 'joining') this._onJoining(this.s.joining.find(j => j.raw === k.ref), msg, time, topic);
+      else this._onCircle(this._circle(k.ref), msg, time, topic, k.old);
     } catch (e) {
       this.emit('warn', e);
     }
     this._save();
   }
 
-  _onInvite(inv, msg) {
+  // a message signed by the key it carries (used before we know someone's key)
+  _selfSigned(msg, topic) {
+    return identity.isKey(msg.pub) && identity.verify(msg.pub, topic, payloadOf(msg), msg.sig);
+  }
+
+  /* --- pairing: the person who made the code --- */
+  _onInvite(inv, msg, topic) {
     if (!inv || msg.t !== 'join') return;
-    const sec = codes.inviteSecret(inv.raw), key = codes.keyFor(sec), topic = codes.topicFor(sec);
+    if (inv.kind === 'group') return this._onGroupJoin(inv, msg, topic);
+    const v2 = msg.v === 2;
+    if (v2 && !(identity.isKey(msg.eph) && identity.isKey(msg.xpub) && this._selfSigned(msg, topic))) return;
+    const sec = codes.inviteSecret(inv.raw);
     let c = inv.circleId ? this._circle(inv.circleId) : null;
     if (inv.circleId && (!c || !c.members[msg.from])) return; // already used by someone else
+    if (c && c.members[msg.from].pub && c.members[msg.from].pub !== msg.pub) return;
     if (!c) {
       const name = clip(msg.name, MAX_NAME) || 'Someone';
-      const secret = codes.newSecret();
-      c = { id: codes.newId(), kind: 'pair', name, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: { name: this.me.name }, [msg.from]: { name } }, createdAt: this.now(), since: this._nowSec() - 5 };
+      let secret, them;
+      if (v2) {
+        if (!inv.eph) inv.eph = identity.ephemeral();
+        inv.joinEph = msg.eph;
+        secret = identity.kdf(identity.dh(inv.eph.priv, msg.eph), sec, `titli-pair-v2|${inv.eph.pub}|${msg.eph}`).toString('hex');
+        them = { name, pub: msg.pub, xpub: msg.xpub };
+      } else {
+        // someone on Titli 0.1.32 or earlier: the old way, and the pair upgrades once they update
+        secret = codes.newSecret();
+        them = { name };
+      }
+      c = { id: codes.newId(), kind: 'pair', v: v2 ? 2 : 1, name, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: them }, createdAt: this.now(), since: this._nowSec() - 5 };
       this.s.circles.push(c);
       inv.circleId = c.id; inv.usedAt = this.now();
       this.s.lastTo = this.s.lastTo || c.id;
       this._syncTopics();
       this.emit('paired', { name, circleId: c.id });
     }
-    this._post(topic, seal(key, { t: 'welcome', from: this.me.id, name: this.me.name, to: msg.from, circle: { id: c.id, secret: c.secret } }));
+    if (c.v === 2 && inv.joinEph === msg.eph) {
+      this._postSigned(topic, codes.keyFor(sec), { t: 'welcome', v: 2, ...this._pub, to: msg.from, eph: inv.eph.pub, joinEph: msg.eph, circle: { id: c.id } });
+    } else if (c.v !== 2 && !v2) {
+      this._postSigned(topic, codes.keyFor(sec), { t: 'welcome', v: 1, to: msg.from, circle: { id: c.id, secret: c.secret } });
+    }
   }
 
-  _onJoining(j, msg, time) {
-    if (!j || msg.t !== 'welcome' || msg.to !== this.me.id || !msg.circle || typeof msg.circle.secret !== 'string' || !/^[0-9a-f]{64}$/.test(msg.circle.secret)) return;
-    this.s.joining = this.s.joining.filter(x => x !== j);
-    if (this._circle(msg.circle.id)) { this._syncTopics(); return; }
+  /* --- pairing: the person who entered the code --- */
+  _onJoining(j, msg, time, topic) {
+    if (!j || msg.t !== 'welcome' || msg.to !== this.me.id) return;
+    if (j.kind === 'group') return this._onGroupWelcome(j, msg, time, topic);
     const name = clip(msg.name, MAX_NAME) || 'Someone';
-    const c = { id: String(msg.circle.id).slice(0, 32), kind: 'pair', name, secret: msg.circle.secret, topic: codes.topicFor(Buffer.from(msg.circle.secret, 'hex')), members: { [this.me.id]: { name: this.me.name }, [msg.from]: { name } }, createdAt: this.now(), since: (time || this._nowSec()) - 10 };
+    const sec = codes.inviteSecret(j.raw);
+    let c;
+    if (msg.v === 2) {
+      if (msg.joinEph !== j.eph.pub || !identity.isKey(msg.eph) || !identity.isKey(msg.xpub) || !this._selfSigned(msg, topic) || !msg.circle || !isId(msg.circle.id)) return;
+      const secret = identity.kdf(identity.dh(j.eph.priv, msg.eph), sec, `titli-pair-v2|${msg.eph}|${j.eph.pub}`).toString('hex');
+      c = { id: msg.circle.id, kind: 'pair', v: 2, name, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: { name, pub: msg.pub, xpub: msg.xpub } }, createdAt: this.now(), since: (time || this._nowSec()) - 10 };
+    } else {
+      // made on Titli 0.1.32 or earlier: take its key now and upgrade the pair when they update
+      if (!msg.circle || !isId(msg.circle.id) || !isHex64(msg.circle.secret)) return;
+      c = { id: msg.circle.id, kind: 'pair', v: 1, name, secret: msg.circle.secret, topic: codes.topicFor(Buffer.from(msg.circle.secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: { name } }, createdAt: this.now(), since: (time || this._nowSec()) - 10 };
+    }
+    this.s.joining = this.s.joining.filter(x => x !== j);
+    if (this._circle(c.id)) { this._syncTopics(); return; }
     this.s.circles.push(c);
     this.s.lastTo = this.s.lastTo || c.id;
     this._syncTopics();
+    if (c.v !== 2) this._startUpgrade(c);
     this.emit('paired', { name, circleId: c.id });
   }
 
-  _onCircle(c, msg, time) {
+  /* --- groups: answering someone who entered our group code --- */
+  _onGroupJoin(inv, msg, topic) {
+    if (msg.v !== 2 || !identity.isKey(msg.eph) || !identity.isKey(msg.xpub) || !this._selfSigned(msg, topic)) return;
+    const c = this._circle(inv.circleId);
+    if (!c || c.v !== 2 || this.now() - inv.createdAt > INVITE_TTL) return;
+    const known = c.members[msg.from];
+    if (known && known.pub !== msg.pub) return;
+    if ((c.removed || []).includes(msg.from)) return;
+    if (!known && Object.keys(c.members).length >= MAX_MEMBERS) return;
+    inv.answered = inv.answered || {};
+    let a = inv.answered[msg.from];
+    if (!a || a.joinEph !== msg.eph) {
+      if (Object.keys(inv.answered).length >= MAX_MEMBERS * 2) return;
+      a = inv.answered[msg.from] = { eph: identity.ephemeral(), joinEph: msg.eph };
+    }
+    const sec = codes.inviteSecret(inv.raw);
+    const key = identity.kdf(identity.dh(a.eph.priv, msg.eph), sec, 'titli-group-welcome-v2');
+    const members = {};
+    for (const [id, m] of Object.entries(c.members)) members[id] = { name: m.name, pub: m.pub, xpub: m.xpub };
+    this._postSigned(topic, codes.keyFor(sec), {
+      t: 'welcome', v: 2, kind: 'group', ...this._pub, to: msg.from, eph: a.eph.pub, joinEph: msg.eph,
+      circle: { id: c.id, name: c.name, epoch: c.epoch || 0, owner: c.owner, members }, box: seal(key, { secret: c.secret })
+    });
+  }
+
+  /* --- groups: we entered a code and someone in the group answered --- */
+  _onGroupWelcome(j, msg, time, topic) {
+    if (msg.v !== 2 || msg.kind !== 'group' || msg.joinEph !== j.eph.pub || !identity.isKey(msg.eph) || !this._selfSigned(msg, topic)) return;
+    const g = msg.circle;
+    if (!g || !isId(g.id) || !g.members || typeof g.members !== 'object' || this._circle(g.id)) return;
+    const key = identity.kdf(identity.dh(j.eph.priv, msg.eph), codes.inviteSecret(j.raw), 'titli-group-welcome-v2');
+    const box = open(key, msg.box);
+    if (!box || !isHex64(box.secret)) return;
+    const members = {};
+    for (const [id, m] of Object.entries(g.members).slice(0, MAX_MEMBERS)) {
+      if (!isId(id) || id === this.me.id || !m || !identity.isKey(m.pub)) continue;
+      members[id] = { name: clip(m.name, MAX_NAME) || 'Someone', pub: m.pub, xpub: identity.isKey(m.xpub) ? m.xpub : undefined };
+    }
+    if (!members[msg.from] || members[msg.from].pub !== msg.pub) return;   // whoever answered must be in the group they describe
+    members[this.me.id] = this._meMember();
+    const c = { id: g.id, kind: 'group', v: 2, epoch: Number.isInteger(g.epoch) && g.epoch >= 0 ? g.epoch : 0, name: clip(g.name, MAX_NAME) || 'Group', secret: box.secret,
+      topic: codes.topicFor(Buffer.from(box.secret, 'hex')), owner: isId(g.owner) ? g.owner : msg.from, members, joinedWith: j.raw, createdAt: this.now(), since: (time || this._nowSec()) - 10 };
+    this.s.joining = this.s.joining.filter(x => x !== j);
+    this.s.circles.push(c);
+    this.s.lastTo = this.s.lastTo || c.id;
+    this._syncTopics();
+    this._postCircle(c, { t: 'hello', ...this._pub });
+    this.emit('joinedGroup', { group: c.name, circleId: c.id });
+  }
+
+  /* --- everything inside a pair or group --- */
+  _onCircle(c, msg, time, topic, viaOldKey) {
     if (!c) return;
+    let m = c.members[msg.from];
+    const isNew = !m;
+    if (m && m.pub) {
+      // we know their key: it has to be them
+      if (!identity.verify(m.pub, topic, payloadOf(msg), msg.sig)) return;
+    } else if (typeof msg.sig === 'string' && identity.isKey(msg.pub)) {
+      // first time we see their key: it must sign this very message, and only announcements introduce a key
+      if (!ANNOUNCE.includes(msg.t) || !this._selfSigned(msg, topic)) return;
+      // a newcomer has to know the current key: an old one (kept by someone who was removed) gets no one in
+      if (!m && (c.kind === 'pair' || viaOldKey || (c.removed || []).includes(msg.from) || Object.keys(c.members).length >= MAX_MEMBERS)) return;
+      m = c.members[msg.from] = { name: (m && m.name) || 'Someone', pub: msg.pub, xpub: identity.isKey(msg.xpub) ? msg.xpub : undefined };
+    } else {
+      // unsigned: only from someone still on Titli 0.1.32 or earlier, in a circle that hasn't switched over yet
+      if (c.v === 2) return;
+      if (!m && (c.kind === 'pair' || viaOldKey || Object.keys(c.members).length >= MAX_MEMBERS)) return;
+    }
     const name = clip(msg.name, MAX_NAME);
-    const isNew = !c.members[msg.from];
-    if (name || isNew) c.members[msg.from] = { name: name || (c.members[msg.from] && c.members[msg.from].name) || 'Someone' };
+    if (name || isNew) c.members[msg.from] = { ...(m || {}), name: name || (m && m.name) || 'Someone' };
     if (c.kind === 'pair' && name) c.name = name;
-    const fromName = c.members[msg.from].name;
+    m = c.members[msg.from];
+    const fromName = m.name;
 
     switch (msg.t) {
       case 'note': {
         if (msg.text != null && typeof msg.text !== 'string') return;
-        if (!msg.id || this.s.inbox.some(x => x.id === msg.id) || this.s.received.some(x => x.id === msg.id)) return;
+        if (!isId(msg.id) || this.s.inbox.some(x => x.id === msg.id) || this.s.received.some(x => x.id === msg.id)) return;
         const item = {
-          kind: 'note', id: String(msg.id).slice(0, 40), circleId: c.id, from: msg.from, fromName,
+          kind: 'note', id: msg.id, circleId: c.id, from: msg.from, fromName,
           circleName: c.kind === 'group' ? c.name : null, text: msg.text == null ? null : clip(msg.text, 80) || null,
-          style: STYLES.includes(msg.style) ? msg.style : 'rose', at: Number(msg.at) || (time || this._nowSec()) * 1000
+          // when the relay got it, not when the sender says it was sent
+          style: STYLES.includes(msg.style) ? msg.style : 'rose', at: time ? time * 1000 : this.now()
         };
         this.s.inbox.push(item);
         if (this.s.inbox.length > MAX_INBOX) this.s.inbox.splice(0, this.s.inbox.length - MAX_INBOX);
-        this._postCircle(c, { t: 'got', id: item.id });
+        if (this.s.settings.sendReceipts) this._postCircle(c, { t: 'got', id: item.id });
         this.emit('inbox');
         break;
       }
       case 'got': case 'seen': case 'react': {
-        const rec = this.s.sent.find(m => m.id === msg.id);
+        const rec = this.s.sent.find(x => x.id === msg.id && x.circleId === c.id);
         if (!rec) return;
-        const rc = rec.rc[msg.from] || (rec.rc[msg.from] = { st: 'sent', react: null });
+        const rc = rec.rc[msg.from] || (Object.keys(rec.rc).length < MAX_MEMBERS ? (rec.rc[msg.from] = { st: 'sent', react: null }) : null);
+        if (!rc) return;
         const st = msg.t === 'got' ? 'arrived' : 'seen';
         if (RANK[st] > RANK[rc.st]) rc.st = st;
         if (msg.t === 'react' && REACTIONS.includes(msg.r) && !rc.react) {
@@ -382,13 +579,17 @@ class TitliCore extends EventEmitter {
       }
       case 'hello':
         if (c.kind === 'group') {
-          this._postCircle(c, { t: 'hi', gname: c.nameUnknown ? undefined : c.name });
+          this._postCircle(c, { t: 'hi', ...this._pub, owner: c.owner === this.me.id || undefined, gname: c.nameUnknown ? undefined : c.name });
           if (isNew) this.emit('joined', { name: fromName, group: c.name });
+          this._maybeUpgradeGroup(c);
         }
         break;
       case 'hi':
-        if (c.kind === 'group' && c.nameUnknown && typeof msg.gname === 'string' && clip(msg.gname, MAX_NAME)) {
-          c.name = clip(msg.gname, MAX_NAME); c.nameUnknown = false;
+        if (c.kind === 'group') {
+          if (c.nameUnknown && typeof msg.gname === 'string' && clip(msg.gname, MAX_NAME)) { c.name = clip(msg.gname, MAX_NAME); c.nameUnknown = false; }
+          // old groups had no owner on record; whoever made it says so once they update
+          if (c.v !== 2 && !c.owner && msg.owner === true && m.pub) c.owner = msg.from;
+          this._maybeUpgradeGroup(c);
         }
         break;
       case 'bye':
@@ -398,23 +599,158 @@ class TitliCore extends EventEmitter {
           this.emit('unpaired', { name: fromName });
         } else {
           delete c.members[msg.from];
+          // they're out: everyone else gets a new key
+          if (c.v === 2 && c.owner === this.me.id) this._rekey(c, {});
         }
+        break;
+      case 'upgrade':
+        if (c.kind === 'pair' && c.v !== 2 && m.pub) this._onUpgrade(c, msg, time);
+        break;
+      case 'rekey':
+        this._onRekey(c, msg, time);
         break;
       default:
     }
+    // someone still on an old channel: repeat the latest key change there so they catch up
+    if (viaOldKey && this._circle(c.id) && c.owner === this.me.id && c.lastRekey && c.members[msg.from] && msg.t !== 'rekey') this._resync(c, topic);
     this._changed();
+  }
+
+  /* --- upgrading a pair made by an older Titli: a fresh key exchange over the old channel --- */
+  _startUpgrade(c) {
+    if (c.kind !== 'pair' || c.v === 2) return;
+    if (!c.up) c.up = { eph: identity.ephemeral() };
+    this._postCircle(c, { t: 'upgrade', ...this._pub, eph: c.up.eph.pub });
+  }
+
+  _onUpgrade(c, msg, time) {
+    if (!identity.isKey(msg.eph)) return;
+    if (!c.up) c.up = { eph: identity.ephemeral() };
+    // answer with ours (again, if they have a new one), so they can finish even if they missed it
+    if (c.up.peerEph !== msg.eph) { c.up.peerEph = msg.eph; this._postCircle(c, { t: 'upgrade', ...this._pub, eph: c.up.eph.pub }); }
+    const both = [c.up.eph.pub, msg.eph].sort().join('|');
+    const secret = identity.kdf(identity.dh(c.up.eph.priv, msg.eph), Buffer.from(c.secret, 'hex'), `titli-upgrade-v2|${both}`).toString('hex');
+    this._switchKey(c, secret, (time || this._nowSec()) - 10, KEEP_OLD_KEY);
+    c.v = 2; delete c.up;
+    this._syncTopics();
+    this.emit('secured', { name: c.members[msg.from].name });
+  }
+
+  /* --- groups: a new key for everyone still in it (owner only) --- */
+  // gid: the owner's id for the group (groups from older versions have a different id on each device)
+  _boxKey(theirXpub, gid, epoch) {
+    return identity.kdf(identity.dh(this.me.keys.box.priv, theirXpub), Buffer.from('titli'), `titli-group-box|${gid}|${epoch}`);
+  }
+
+  _rekey(c, { exclude = [], owner = c.owner }) {
+    const epoch = (c.epoch || 0) + 1, secret = codes.newSecret();
+    const keep = Object.entries(c.members).filter(([id, m]) => !exclude.includes(id) && (id === this.me.id || identity.isKey(m.xpub)));
+    const members = {}, boxes = {};
+    for (const [id, m] of keep) {
+      members[id] = id === this.me.id ? this._meMember() : { name: m.name, pub: m.pub, xpub: m.xpub };
+      if (id !== this.me.id) boxes[id] = seal(this._boxKey(m.xpub, c.id, epoch), { secret });
+    }
+    if (!members[owner]) owner = keep.map(([id]) => id).sort()[0] || this.me.id;
+    const removed = exclude.filter(id => id !== this.me.id);
+    const change = { t: 'rekey', gid: c.id, epoch, owner, members, boxes, removed: removed.length ? removed : undefined };
+    this._postCircle(c, change);
+    // codes made before the change could let someone who just left straight back in
+    this.s.invites = this.s.invites.filter(i => i.circleId !== c.id);
+    if (exclude.includes(this.me.id)) {
+      this.s.circles = this.s.circles.filter(x => x !== c);
+      this._syncTopics();
+      return;
+    }
+    c.members = members; c.epoch = epoch; c.owner = owner; c.v = 2; delete c.code;
+    c.removed = [...new Set([...(c.removed || []), ...removed])].slice(-50);
+    c.lastRekey = change;
+    this._switchKey(c, secret, this._nowSec() - 5, KEEP_OLD_KEY_OWNER);
+    this._syncTopics();
+  }
+
+  _onRekey(c, msg, time) {
+    if (c.kind !== 'group') return;
+    const sender = c.members[msg.from];
+    // only the owner can change the key (an old group with no owner on record: any member who has updated)
+    const allowed = c.owner ? msg.from === c.owner : c.v !== 2;
+    if (!allowed || !sender || !sender.pub || !identity.isKey(sender.xpub)) return;
+    const epoch = Number(msg.epoch);
+    if (!Number.isInteger(epoch) || epoch <= (c.epoch || 0) || !msg.members || typeof msg.members !== 'object') return;
+    if (!msg.members[this.me.id] || !msg.boxes || typeof msg.boxes[this.me.id] !== 'string') {
+      // we're not in the new group
+      this.s.circles = this.s.circles.filter(x => x !== c);
+      this.s.invites = this.s.invites.filter(i => i.circleId !== c.id);
+      this._syncTopics();
+      this.emit('removed', { group: c.name });
+      return;
+    }
+    const box = open(this._boxKey(sender.xpub, isId(msg.gid) ? msg.gid : c.id, epoch), msg.boxes[this.me.id]);
+    if (!box || !isHex64(box.secret)) return;
+    const members = {};
+    for (const [id, nm] of Object.entries(msg.members).slice(0, MAX_MEMBERS)) {
+      if (!isId(id) || !nm || !identity.isKey(nm.pub)) continue;
+      const had = c.members[id];
+      // keep the keys we already know; the owner can't swap someone's key
+      members[id] = had && had.pub ? had : { name: clip(nm.name, MAX_NAME) || 'Someone', pub: nm.pub, xpub: identity.isKey(nm.xpub) ? nm.xpub : undefined };
+    }
+    members[this.me.id] = this._meMember();
+    c.members = members; c.epoch = epoch; c.v = 2; delete c.code;
+    c.owner = isId(msg.owner) && members[msg.owner] ? msg.owner : msg.from;
+    if (Array.isArray(msg.removed)) c.removed = [...new Set([...(c.removed || []), ...msg.removed.filter(isId)])].slice(-50);
+    this.s.invites = this.s.invites.filter(i => i.circleId !== c.id);
+    this._switchKey(c, box.secret, (time || this._nowSec()) - 10, KEEP_OLD_KEY);
+    this._syncTopics();
+  }
+
+  // an old group switches to the new protection once everyone in it has updated (its maker does it)
+  _maybeUpgradeGroup(c) {
+    if (c.kind !== 'group' || c.v === 2 || c.owner !== this.me.id) return;
+    const others = Object.entries(c.members).filter(([id]) => id !== this.me.id);
+    if (others.length && others.every(([, m]) => identity.isKey(m.pub) && identity.isKey(m.xpub))) this._rekey(c, {});
+  }
+
+  _resync(c, topic) {
+    const last = this._resynced.get(topic) || 0;
+    if (this.now() - last < 10 * 60 * 1000) return;
+    const o = (c.old || []).find(x => x.topic === topic);
+    if (!o) return;
+    this._resynced.set(topic, this.now());
+    this._postSigned(topic, codes.keyFor(Buffer.from(o.secret, 'hex')), c.lastRekey);
+  }
+
+  _switchKey(c, secret, sinceSec, keepFor) {
+    const now = this.now();
+    c.old = (c.old || []).filter(o => o.until > now).slice(-3);
+    c.old.push({ topic: c.topic, secret: c.secret, since: c.since, until: now + keepFor });
+    c.secret = secret; c.topic = codes.topicFor(Buffer.from(secret, 'hex')); c.since = sinceSec;
+  }
+
+  // once per start: tell every circle our keys (so groups can switch over and stragglers catch up), and upgrade old pairs
+  _announce() {
+    for (const c of this.s.circles) {
+      if (c.kind === 'pair') { if (c.v !== 2) this._startUpgrade(c); }
+      else this._postCircle(c, { t: 'hi', ...this._pub, owner: c.owner === this.me.id || undefined, gname: c.nameUnknown ? undefined : c.name });
+    }
   }
 
   _sendJoin(j) {
     if (!j) return;
+    if (!j.eph) j.eph = identity.ephemeral();
     const sec = codes.inviteSecret(j.raw);
-    this._post(codes.topicFor(sec), seal(codes.keyFor(sec), { t: 'join', from: this.me.id, name: this.me.name }));
+    this._postSigned(codes.topicFor(sec), codes.keyFor(sec), { t: 'join', v: 2, kind: j.kind === 'group' ? 'group' : undefined, ...this._pub, eph: j.eph.pub });
   }
   _resendJoins() { for (const j of this.s.joining) this._sendJoin(j); }
 
   _postCircle(c, obj, sentId) {
-    const payload = { ...obj, from: this.me.id, name: this.me.name };
-    this._post(c.topic, seal(codes.keyFor(Buffer.from(c.secret, 'hex')), payload), sentId);
+    this._postSigned(c.topic, codes.keyFor(Buffer.from(c.secret, 'hex')), obj, sentId);
+  }
+
+  // everything we send carries who it's from, when, and our signature over all of it
+  _postSigned(topic, key, obj, sentId) {
+    const payload = { ...obj, v: obj.v || 2, from: this.me.id, name: this.me.name, ts: this.now() };
+    for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
+    payload.sig = identity.sign(this.me.keys, topic, payload);
+    this._post(topic, seal(key, payload), sentId);
   }
 
   _post(topic, body, sentId) {
@@ -437,7 +773,7 @@ class TitliCore extends EventEmitter {
     this._flushing = true;
     try {
       // the relay keeps things for 12 hours, so anything older than that has missed its chance
-      const fresh = this.s.outbox.filter(o => this.now() - o.at < 12 * 3600 * 1000);
+      const fresh = this.s.outbox.filter(o => this.now() - o.at < 12 * HOUR);
       this.s.outbox = [];
       for (let i = 0; i < fresh.length; i++) {
         try { await this.relay.publish(fresh[i].topic, fresh[i].body); this._markSent(fresh[i].sentId); }
@@ -449,10 +785,12 @@ class TitliCore extends EventEmitter {
 
   _prune() {
     const now = this.now();
-    const before = this.s.invites.length + this.s.joining.length;
-    this.s.invites = this.s.invites.filter(i => i.circleId ? now - i.usedAt < USED_INVITE_TTL : now - i.createdAt < INVITE_TTL);
+    const before = this.s.invites.length + this.s.joining.length + this.s.circles.reduce((n, c) => n + (c.old || []).length, 0);
+    this.s.invites = this.s.invites.filter(i => i.kind === 'group' ? now - i.createdAt < INVITE_TTL : (i.circleId ? now - i.usedAt < USED_INVITE_TTL : now - i.createdAt < INVITE_TTL));
     this.s.joining = this.s.joining.filter(j => now - j.createdAt < INVITE_TTL);
-    if (this.s.invites.length + this.s.joining.length !== before) { this._syncTopics(); this._save(); }
+    for (const c of this.s.circles) c.old = (c.old || []).filter(o => o.until > now);
+    const after = this.s.invites.length + this.s.joining.length + this.s.circles.reduce((n, c) => n + c.old.length, 0);
+    if (after !== before) { this._syncTopics(); this._save(); }
   }
 
   _persistRelay() { this.s.relayCaught = this.relay.persistState(); this.store.save(); }
@@ -466,4 +804,4 @@ class TitliCore extends EventEmitter {
   }
 }
 
-module.exports = { TitliCore, STYLES, REACTIONS, MAX_TEXT, MAX_QUICK };
+module.exports = { TitliCore, STYLES, REACTIONS, MAX_TEXT, MAX_QUICK, MAX_MEMBERS, clip, relayOk };

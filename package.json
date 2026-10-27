@@ -17,8 +17,8 @@
     "dist:win": "npm run build:helper && electron-builder --win --x64 --publish never"
   },
   "devDependencies": {
-    "electron": "33.4.11",
-    "electron-builder": "25.1.8"
+    "electron": "44.9.3",
+    "electron-builder": "26.17.0"
   },
   "build": {
     "appId": "app.titli.mac",

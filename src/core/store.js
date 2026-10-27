@@ -1,5 +1,6 @@
 'use strict';
-// Everything Titli knows lives in one JSON file on this laptop (readable only by this user).
+// Everything Titli knows lives in one JSON file on this laptop, readable only by this user and,
+// where the system offers it, encrypted with a key the system keeps (see the crypt option).
 
 const fs = require('fs');
 const path = require('path');
@@ -18,6 +19,7 @@ function defaults() {
       notifyReactions: true,
       openAtLogin: true,
       allowCapture: false,  // let screen recordings see butterflies (for filming)
+      sendReceipts: true,   // tell people when their note arrived and when you saw it
       style: 'rose'
     },
     circles: [],     // people you're paired with, and groups
@@ -34,16 +36,39 @@ function defaults() {
   };
 }
 
+// crypt (optional): { name, encrypt(string) -> Buffer, decrypt(Buffer) -> string }, e.g. Electron's safeStorage,
+// which keeps its key in the macOS Keychain or with Windows (DPAPI). Then the file holds only ciphertext.
 class Store {
-  constructor(file) {
+  // encrypt: write encrypted from now on (an already-encrypted file always stays encrypted)
+  constructor(file, { crypt = null, encrypt = !!crypt } = {}) {
     this.file = file;
+    this.crypt = crypt;
+    this.encrypt = !!(crypt && encrypt);
     this.state = null;
+    this.unlockFailed = false;
     this._timer = null;
   }
 
+  _read() {
+    let text;
+    try { text = fs.readFileSync(this.file, 'utf8'); } catch (e) { return null; }
+    let data;
+    try { data = JSON.parse(text); } catch (e) { return null; }
+    if (!data || data.titliEncrypted !== 1) return data;
+    try {
+      if (!this.crypt) throw new Error('no key');
+      this.encrypt = true;
+      return JSON.parse(this.crypt.decrypt(Buffer.from(String(data.data), 'base64')));
+    } catch (e) {
+      // the system won't give us the key (a new computer, a reset keychain): keep the file aside, start fresh
+      this.unlockFailed = true;
+      try { fs.renameSync(this.file, this.file.replace(/\.json$/, '') + `.locked-${Date.now()}.json`); } catch (err) { /* best effort */ }
+      return null;
+    }
+  }
+
   load() {
-    let data = null;
-    try { data = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch (e) { data = null; }
+    const data = this._read();
     const d = defaults();
     if (!data || typeof data !== 'object') { this.state = d; this.saveNow(); return this.state; }
     this.state = { ...d, ...data, me: { ...d.me, ...(data.me || {}) }, settings: { ...d.settings, ...(data.settings || {}) } };
@@ -65,7 +90,11 @@ class Store {
     if (!this.state) return;
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = this.file + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(this.state, null, 1), { mode: 0o600 });
+    const plain = JSON.stringify(this.state, null, 1);
+    const out = this.encrypt
+      ? JSON.stringify({ titliEncrypted: 1, by: this.crypt.name, data: this.crypt.encrypt(plain).toString('base64') })
+      : plain;
+    fs.writeFileSync(tmp, out, { mode: 0o600 });
     fs.renameSync(tmp, this.file);
   }
 }

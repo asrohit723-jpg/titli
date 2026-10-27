@@ -23,7 +23,13 @@ const PLATFORM = WIN ? 'win' : 'mac';
 const FEED = `${RELEASES}/latest/download/latest-${PLATFORM}.json`;
 const BUNDLE_ID = 'app.titli.mac';
 const CHECK_EVERY = 6 * 3600 * 1000;
-const PUBLIC_KEY = (() => { try { return fs.readFileSync(path.join(__dirname, 'update-key.pem'), 'utf8'); } catch (e) { return null; } })();
+// the keys updates may be signed with: the original one, and the one kept only in the approved "release" environment
+const PUBLIC_KEYS = ['update-key.pem', 'update-key-2.pem'].map(f => { try { return fs.readFileSync(path.join(__dirname, f), 'utf8'); } catch (e) { return null; } }).filter(Boolean);
+const PUBLIC_KEY = PUBLIC_KEYS.length ? PUBLIC_KEYS : null;
+// the newest manifest we've seen; an older one (served again to hold this computer back) is ignored
+const SEEN_FILE = () => path.join(app.getPath('userData'), 'update-seen.json');
+const readSeen = () => { try { return JSON.parse(fs.readFileSync(SEEN_FILE(), 'utf8')).published || null; } catch (e) { return null; } };
+const writeSeen = published => { try { fs.writeFileSync(SEEN_FILE(), JSON.stringify({ published }), { mode: 0o600 }); } catch (e) { /* best effort */ } };
 
 // a failure with a short message for people and the full story for the log and "Copy details"
 class StepError extends Error {
@@ -129,6 +135,9 @@ class Updater extends EventEmitter {
       if (res.status === 404) { this._set({ status: 'uptodate', checkedAt: Date.now() }); return; } // nothing published yet
       if (!res.ok) throw new Error(`The update server answered ${res.status}.`);
       const m = verifyManifest(await res.text(), PUBLIC_KEY, { platform: PLATFORM });
+      const seen = readSeen(), at = Date.parse(m.published || '');
+      if (seen && Number.isFinite(at) && at < Date.parse(seen)) throw new StepError('The update information is older than what Titli has already seen, so it was ignored.', `manifest ${m.published} < seen ${seen}`);
+      if (Number.isFinite(at) && (!seen || at > Date.parse(seen))) writeSeen(m.published);
       const build = m.builds[process.arch];
       if (!build) throw new Error('There’s no update for this kind of computer yet.');
       if (compareVersions(m.version, app.getVersion()) <= 0) {

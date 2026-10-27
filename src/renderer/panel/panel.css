@@ -191,6 +191,17 @@ kbd{font-family:var(--font-body)}
 .conn-actions{flex-basis:100%; display:flex; flex-wrap:wrap; gap:8px; padding-left:52px}
 .conn-actions .btn{height:32px; padding:0 12px; border-radius:999px; font-size:12.5px}
 .conn-actions .ask{flex-basis:100%; font-size:12.5px; color:var(--mist); margin:0}
+.conn-actions .hint.full{flex-basis:100%; margin-top:-2px}
+.safety{flex-basis:100%; display:flex; flex-direction:column; gap:4px; padding:10px 12px; border-radius:12px; background:var(--surface-2)}
+.safety-head{display:flex; align-items:center; justify-content:space-between; gap:8px}
+.safety-lbl{font-size:12px; font-weight:600; color:var(--mist)}
+.safety-code{font-size:17px; letter-spacing:3px; line-height:1}
+.safety .hint{font-size:11.5px; line-height:1.35}
+.conn-actions .members{flex-basis:100%; list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px}
+.conn-actions .members li{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 2px; font-size:12.5px}
+.conn-actions .members .mem-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.link.danger{color:var(--link)}
+.switch-row.static{cursor:default}
 .card{display:flex; flex-direction:column; gap:10px; padding:14px; border-radius:16px; background:var(--surface); border:1px solid var(--line)}
 .card-title{font-size:13.5px; font-weight:600}
 .code-row{display:flex; align-items:center; gap:8px}

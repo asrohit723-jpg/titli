@@ -4,8 +4,14 @@ name: Update check
 #   repro:    unpacks the published update by hand into the places the updater has used, on macOS 14 and 15
 #   e2e:      installs an older Titli (built from this code) in /Applications, marked as downloaded,
 #             lets it update itself from the live release, and checks the new version is in place and running
+#   keychain: an ad-hoc Titli, then two versions signed with one (throwaway) certificate, one after the other:
+#             saved data gets encrypted, stays readable after the "update", and no password prompt appears
+#   untrusted: that signature checks out on a Mac that has never seen the certificate (what the updater checks)
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   repro:
@@ -34,8 +40,8 @@ jobs:
       matrix: { os: [macos-14, macos-15] }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 20, cache: npm }
       - run: npm ci
       - name: Build an older Titli (0.1.0) from this code
@@ -70,4 +76,71 @@ jobs:
             note error "Did not update (now $v, wanted $LATEST, running: ${running:-nothing})%0A$detail"
             exit 1
           fi
+
+  keychain:
+    strategy:
+      fail-fast: false
+      matrix: { os: [macos-14, macos-15] }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 20, cache: npm }
+      - run: npm ci && npm run build:helper
+      - name: Build an ad-hoc Titli and two signed ones
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          set -e
+          build() { npm pkg set version="$1"; npx electron-builder --mac --arm64 --dir --publish never > "build-$1.log" 2>&1 || { tail -40 "build-$1.log"; exit 1; }; mkdir -p "$RUNNER_TEMP/$2"; ditto dist/mac-arm64/Titli.app "$RUNNER_TEMP/$2/Titli.app"; rm -rf dist/mac-arm64; }
+          build 0.1.1 adhoc
+          openssl req -x509 -newkey rsa:3072 -sha256 -days 30 -nodes -keyout k.pem -out c.pem -subj "/CN=Titli Self-Signed/O=Titli" \
+            -addext "basicConstraints=critical,CA:false" -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
+          openssl pkcs12 -export -inkey k.pem -in c.pem -name "Titli Self-Signed" -out t.p12 -passout pass:throwaway -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 2>/dev/null
+          scripts/ci-import-cert.sh t.p12 throwaway
+          export TITLI_SIGN_IDENTITY="$(grep TITLI_SIGN_IDENTITY "$GITHUB_ENV" | tail -1 | cut -d= -f2)"
+          build 0.1.2 signedA
+          build 0.1.3 signedB
+          codesign -d -r- "$RUNNER_TEMP/signedA/Titli.app" 2>&1 | grep designated
+          codesign -d -r- "$RUNNER_TEMP/signedB/Titli.app" 2>&1 | grep designated
+          ditto -c -k --keepParent "$RUNNER_TEMP/signedB/Titli.app" signedB.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: 'signed-${{ matrix.os }}', path: signedB.zip }
+      - name: Ad-hoc, then signed, then a signed update
+        run: |
+          note() { msg="$(printf '%s' "$2" | tail -n 40 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; echo "::$1::$msg"; }
+          install() { rm -rf /Applications/Titli.app; ditto "$RUNNER_TEMP/$1/Titli.app" /Applications/Titli.app; }
+          runfor() { ( "/Applications/Titli.app/Contents/MacOS/Titli" > "run-$1.log" 2>&1 & echo $! > pid ); sleep "$2"; kill "$(cat pid)" 2>/dev/null || true; sleep 1; }
+          item() { security find-generic-password -s "Titli Safe Storage" >/dev/null 2>&1 && echo yes || echo no; }
+          report=""
+          install adhoc; runfor adhoc 30
+          report="${report}after the ad-hoc version ran: keychain item=$(item)%0A"
+          install signedA
+          a="$(TITLI_TEST_DATA=write timeout 90 /Applications/Titli.app/Contents/MacOS/Titli 2>&1 | grep '\[titli\] data' || echo 'TIMED OUT (prompt?)')"
+          report="${report}signed 0.1.2 writes: $a%0A"
+          install signedB
+          b="$(TITLI_TEST_DATA=read timeout 90 /Applications/Titli.app/Contents/MacOS/Titli 2>&1 | grep '\[titli\] data' || echo 'TIMED OUT (prompt?)')"
+          report="${report}signed 0.1.3 reads: $b%0A"
+          head -c 400 "$HOME/Library/Application Support/Titli/titli.json"; echo
+          if echo "$a" | grep -q 'encrypted=true onDiskEncrypted=true marker=true' && echo "$b" | grep -q 'encrypted=true onDiskEncrypted=true marker=true unlockFailed=false'; then
+            note notice "$(sw_vers -productVersion): saved data stays encrypted and readable across a signed update%0A$report"
+          else
+            note error "$(sw_vers -productVersion): Keychain check failed%0A$report"; exit 1
+          fi
+
+  untrusted:
+    needs: keychain
+    strategy:
+      fail-fast: false
+      matrix: { os: [macos-14, macos-15] }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: 'signed-${{ matrix.os }}' }
+      - name: The updater's signature check on a Mac that doesn't know the certificate
+        run: |
+          ditto -x -k signedB.zip out
+          codesign --verify --deep --verbose=2 out/Titli.app
+          codesign -dv --verbose=2 out/Titli.app 2>&1 | grep -E 'Authority|Signature|TeamIdentifier'
+          echo "::notice::$(sw_vers -productVersion): codesign --verify --deep passes without trusting the certificate"
 

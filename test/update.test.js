@@ -89,3 +89,24 @@ test('versions compare numerically', () => {
   assert.equal(compareVersions('0.2.0', '0.1.99'), 1);
   assert.equal(compareVersions('1.0.0', '1.0.0'), 0);
 });
+
+test('manifests signed with the old key, the new key, or both: each app accepts what it should', () => {
+  const v1 = require('./fixtures/v1/update-manifest');   // what Titli 0.1.32 runs
+  const oldK = pair(), newK = pair(), stranger = pair();
+  const both = JSON.stringify(signManifest(body(), { old: oldK.priv, current: newK.priv }));
+  const newOnly = JSON.stringify(signManifest(body(), { current: newK.priv }));
+  const oldOnly = JSON.stringify(signManifest(body(), { old: oldK.priv }));
+  // today's apps trust both keys
+  for (const t of [both, newOnly, oldOnly]) assert.equal(verifyManifest(t, [oldK.pub, newK.pub]).version, '0.1.12');
+  // 0.1.32 still installs a dual-signed update (so it can reach the version that trusts the new key)
+  assert.equal(v1.verifyManifest(both, oldK.pub).version, '0.1.12');
+  assert.throws(() => v1.verifyManifest(newOnly, oldK.pub));
+  // once the old key is dropped from the app, only the new one counts
+  assert.throws(() => verifyManifest(oldOnly, [newK.pub]), /signature/);
+  assert.equal(verifyManifest(both, [newK.pub]).version, '0.1.12');
+  // a stranger's key is no use, and neither is moving one signature onto other content
+  assert.throws(() => verifyManifest(JSON.stringify(signManifest(body(), { current: stranger.priv })), [oldK.pub, newK.pub]), /signature/);
+  const swapped = { ...JSON.parse(both), version: '9.9.9' };
+  assert.throws(() => verifyManifest(JSON.stringify(swapped), [oldK.pub, newK.pub]), /signature/);
+  assert.equal(verifyManifest(both, [newK.pub]).sig2, undefined, 'signatures are not part of the result');
+});

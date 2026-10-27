@@ -15,6 +15,7 @@ and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 - **A different flight every time**: it arrives one of 8 ways (a wide sweep, a lazy loop, a figure eight, a dive, a fly-by from beside you...) and leaves one of 6, each re-shaped on every visit and flown in a calm, easy or playful mood. It never repeats its last few routes.
 - **Activity**: everything you sent and received in one timeline, with seen receipts and reactions.
 - **No accounts**: everything stays on your computer. Butterflies travel through a free relay ([ntfy](https://ntfy.sh)), encrypted on your laptop so the relay can't read them.
+- **Private by design**: pairing uses a key exchange, so an invite code someone else sees is useless; every message is signed, so nobody can send as you; group keys change when someone leaves; your saved data is encrypted with a key your computer keeps. See [Security](#security).
 
 ## Run it on your Mac (from source)
 
@@ -72,9 +73,10 @@ Once Titli is installed, it updates itself: when a new version is out, an **Upda
 top of the panel (and in Settings → Updates and the menu-bar right-click menu). One click downloads it,
 checks it, swaps it in and reopens Titli. There's no "Open Anyway" step for updates.
 
-How it stays safe: every build publishes `latest-mac.json` and `latest-win.json`, signed with a private key
-that only GitHub Actions has. The app checks that signature with the public key it ships with
-(`src/main/update-key.pem`), then the download's size and SHA-256. On a Mac it also checks the bundle id,
+How it stays safe: every build publishes `latest-mac.json` and `latest-win.json`, signed with private keys
+that only GitHub has. The app checks the signature against the public keys it ships with
+(`src/main/update-key.pem`, the original, and `update-key-2.pem`, the release key), ignores a manifest older
+than one it has already seen, then checks the download's size and SHA-256. On a Mac it also checks the bundle id,
 the version and the code signature before swapping the app; on Windows it then runs the installer quietly,
 which replaces Titli and reopens it. If any check fails, nothing is replaced.
 
@@ -84,14 +86,19 @@ downloads. The code stays private. One-time setup:
 1. Create a public repo named `titli-releases` on GitHub, and tick **Add a README** so it isn't empty.
 2. Make a token: GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token.
    Repository access: **Only select repositories** → `titli-releases`. Permissions: **Contents → Read and write**.
-3. In this repo: Settings → Secrets and variables → Actions → New repository secret, twice:
-   - `RELEASES_TOKEN`: the token from step 2
-   - `UPDATE_SIGNING_KEY`: the private key (the whole `-----BEGIN PRIVATE KEY-----` block)
+3. In this repo: Settings → Secrets and variables → Actions → New repository secret:
+   `RELEASES_TOKEN`, the token from step 2. (`UPDATE_SIGNING_KEY`, the original signing key, is here too
+   until everyone has updated past 0.1.32; then delete it.)
+4. Settings → Environments → **New environment** named `release`:
+   - **Required reviewers**: yourself, so no release goes out without your click.
+   - **Deployment branches**: Selected branches → `main`.
+   - **Environment secret** `RELEASE_KEYS`: the release key blob (the new update-signing key and the Mac
+     signing certificate). Only jobs you approve can read it.
 
 Then every run of the **Build** workflow (Actions → Build → Run workflow) gets a new version number
-(`0.1.<run>`) and is published to `titli-releases`, where installed apps find it within a few hours or as
-soon as someone opens the panel. Without the secrets, the build still runs and its installers are kept as a
-workflow artifact; it just isn't published as an update.
+(`0.1.<run>`). The `release` job waits for your approval, then builds the Mac apps, signs the update
+manifests and publishes to `titli-releases`, where installed apps find it within a few hours or as soon as
+someone opens the panel.
 
 ## How it works
 
@@ -100,6 +107,7 @@ workflow artifact; it just isn't published as an update.
 | Pairing, groups, sending, receipts | `src/core/titli.js` (plain Node, tested) |
 | Invite codes and key derivation | `src/core/codes.js` |
 | Encryption (AES-256-GCM) | `src/core/seal.js` |
+| Device keys, signatures, key exchange, safety codes | `src/core/identity.js` |
 | Relay client (ntfy JSON stream, 12-hour catch-up) | `src/core/relay.js` |
 | When a butterfly may land | `src/core/presence.js`, `src/main/delivery.js` |
 | Camera / mic / full-screen checks | `native/mac/TitliPresence.swift`, `native/win/TitliPresence.cs` |
@@ -110,21 +118,51 @@ workflow artifact; it just isn't published as an update.
 | The 3D butterfly | `src/renderer/overlay/overlay.js` (three.js) |
 | Its flight routes (planned and checked for smooth turns) | `src/renderer/overlay/flight-paths.js` |
 
-**Pairing.** An invite code (`P…`) is single-use. When the other person enters it, their Titli posts
-"join" on a channel derived from the code; yours answers "welcome" with a fresh random secret for the
-two of you, and the code is used up. A group code (`G…`) is the group's secret itself, so anyone
-with it can join.
+**Pairing.** An invite code (`P…`) is single-use and lasts 24 hours. When the other person enters it,
+their Titli posts "join" with a one-off public key on a channel derived from the code; yours answers
+"welcome" with its own. Each side works out the pair's secret from the two keys (X25519), so it never
+crosses the relay and someone who only saw the code learns nothing. The code is used up. Pairs made by
+0.1.32 or earlier do the same exchange over their old channel once both people have updated.
+
+**Groups.** A group code (`H…`) is an invite that lasts 24 hours. Whoever made it answers each joiner with
+the group's random secret, sealed so only that joiner can open it. The owner can remove people; when
+someone leaves or is removed, the owner makes a new secret and seals a copy for each remaining member,
+and open codes are cancelled. Old groups (`G…` codes, where the code was the secret) switch over once
+everyone in them has updated.
 
 **Delivery.** Each pair or group has a relay topic and a key, both derived from its secret. Notes,
 "arrived", "seen" and reactions are all encrypted before they leave your Mac. ntfy keeps messages
 for 12 hours, so a laptop that was asleep catches up when it wakes.
 
-**Relay.** `https://ntfy.sh` is free and needs no account. For more reliability or longer catch-up,
+**Signed messages.** Each computer has its own signing key (Ed25519). Every message is signed, the
+signature covers which channel it was sent to and when, and once Titli knows someone's key it only
+accepts messages signed by it. So nobody, not even someone in your group, can send as you, fake a "Seen",
+or remove you. Messages more than 14 hours old are refused, so old ones can't be played back.
+
+**Relay.** `https://ntfy.sh` is free and needs no account. Relays must use `https://`. For more reliability or longer catch-up,
 run your own ntfy server and set it in Settings → Relay (everyone paired must use the same one).
+
+## Security
+
+| Risk | What Titli does |
+| --- | --- |
+| Someone sees your invite code | The key comes from a key exchange, not the code; the code works once |
+| Someone in a group pretends to be someone else | Every message is signed by its sender's own key |
+| Someone left or was removed but kept the key | A new key for everyone else; old keys and codes let no one back in |
+| Someone between you (rare, needs the code *and* to act first) | Compare the **Safety code** in People → ••• with the other person |
+| Malware or another account reads your files | Saved data is encrypted with a key your computer keeps (Windows; Macs with the release-signed app) |
+| A fake update | Updates must be signed by a key only GitHub's approved release job has |
+| Old messages replayed | Refused after 14 hours, and duplicates are ignored |
+
+What it can't hide: the relay sees which computers are online, when they send something, and that two
+computers share a channel (not who you are or what you say). Run your own relay if that matters. Without
+paid Apple and Microsoft developer certificates, the first install still shows the "Open Anyway" /
+"Run anyway" step, so only download Titli from the link you trust. You can turn off "Arrived"/"Seen"
+in Settings → Privacy.
 
 ## Tests
 
 ```bash
-npm test                                         # core: pairing, groups, offline catch-up, updates
+npm test                                         # core, security (each attack tried), updates, flight paths
 npx electron scripts/smoke.js                     # opens the app, lands a butterfly, saves screenshots to dist/smoke
 ```

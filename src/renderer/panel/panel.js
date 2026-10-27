@@ -9,7 +9,7 @@
   let tab = 'send';
   let toKey = null;        // who the Send tab sends to
   let pairStep = false;    // first run, step 2
-  let menuFor = null, confirming = null;   // People row options
+  let menuFor = null, confirming = null, removing = null;   // People row options
   let flash = null;        // { key, until }: the quick note that was just sent
   let actSeenBefore = 0;   // newest received item when Activity was last opened
   let relayOpen = false;
@@ -73,6 +73,8 @@
     catch (e) { return { ok: false, error: 'Something went wrong. Please try again.' }; }
   }
   const copy = (text, what) => { api.ui('copy', text); toast(`${what} copied`, 'Paste it in WhatsApp'); };
+  // invite codes: wiped from the clipboard again after two minutes
+  const copyCode = (code, what) => { api.ui('copySecret', code); toast(`${what} copied`, 'Paste it in WhatsApp. It clears from your clipboard in 2 minutes.'); };
 
   const STORE_KEY = 'titli.activitySeen';
   const readSeen = () => { try { return Number(localStorage.getItem(STORE_KEY)) || 0; } catch (e) { return 0; } };
@@ -384,7 +386,7 @@
       more.setAttribute('aria-label', `Options for ${c.name}`);
       more.setAttribute('aria-expanded', String(menuFor === c.id));
       more.title = 'Options';
-      more.addEventListener('click', () => { menuFor = menuFor === c.id ? null : c.id; confirming = null; renderPeople(); });
+      more.addEventListener('click', () => { menuFor = menuFor === c.id ? null : c.id; confirming = null; removing = null; renderPeople(); });
       li.append(circleAv(c, 'md'), body, more);
       if (menuFor === c.id) li.append(connActions(c));
       ul.append(li);
@@ -397,7 +399,7 @@
       card.append(el('span', 'card-title', 'Share this code with them'));
       const row = el('div', 'code-row');
       const cp = btn('btn primary pill'); cp.append(icon('i-copy'), document.createTextNode('Copy'));
-      cp.addEventListener('click', () => copy(inv.code, 'Invite code'));
+      cp.addEventListener('click', () => copyCode(inv.code, 'Invite code'));
       row.append(el('span', 'code', inv.code), cp);
       card.append(row);
       const foot = el('div', 'row-head');
@@ -440,10 +442,59 @@
       box.append(yes, no);
       return box;
     }
-    if (isGroup && c.code) {
-      const cp = btn('btn outline'); cp.append(icon('i-copy'), document.createTextNode('Copy group code'));
-      cp.addEventListener('click', () => copy(c.code, 'Group code'));
-      box.append(cp);
+    const who = removing && removing.circleId === c.id && c.people.find(p => p.id === removing.id);
+    if (who) {
+      box.append(el('p', 'ask', `Remove ${who.name} from ${c.name}? Everyone else gets a new key, so they won’t see anything sent after this.`));
+      const yes = btn('btn outline danger', 'Remove');
+      yes.addEventListener('click', async () => {
+        removing = null;
+        const r = await call('removeMember', c.id, who.id);
+        toast(r.ok ? `${who.name} is out of ${c.name}` : (r.error || 'That didn’t work'));
+      });
+      const no = btn('btn outline', 'Keep');
+      no.addEventListener('click', () => { removing = null; renderPeople(); });
+      box.append(yes, no);
+      return box;
+    }
+
+    // the same five emoji on both screens means no one is sitting in the middle
+    const safe = el('div', 'safety');
+    const head = el('div', 'safety-head');
+    head.append(el('span', 'safety-lbl', 'Safety code'), el('span', 'safety-code', c.safety));
+    safe.append(head, el('span', 'hint', !c.secure
+      ? (isGroup ? 'Full protection starts once everyone in it has updated Titli.' : `Full protection starts once ${c.name} updates Titli.`)
+      : (isGroup ? 'Everyone in the group sees these same five.' : `Ask ${c.name} what theirs shows. The same five means no one is listening in.`)));
+    box.append(safe);
+
+    if (isGroup) {
+      if (c.code) {
+        const cp = btn('btn outline'); cp.append(icon('i-copy'), document.createTextNode('Copy invite code'));
+        cp.addEventListener('click', () => copyCode(c.code, 'Invite code'));
+        box.append(cp);
+      } else {
+        const mk = btn('btn outline', 'Make an invite code');
+        mk.addEventListener('click', async () => {
+          const r = await call('createGroupInvite', c.id);
+          if (r.ok && r.code) copyCode(r.code, 'Invite code'); else toast(r.error || 'That didn’t work');
+        });
+        box.append(mk);
+      }
+      if (c.code && c.codeExpiresAt) {
+        const day = new Date(c.codeExpiresAt).toDateString() === new Date().toDateString() ? 'today' : 'tomorrow';
+        box.append(el('span', 'hint full', `Anyone you send it to can join until ${timeStr(c.codeExpiresAt)} ${day}.`));
+      } else if (c.code && c.legacyCode) box.append(el('span', 'hint full', 'An old-style code that never expires. It stops working once everyone in the group has updated.'));
+      if (c.owner && c.people.length) {
+        const list = el('ul', 'members');
+        for (const p of c.people) {
+          const li = el('li');
+          const rm = btn('link danger', 'Remove');
+          rm.setAttribute('aria-label', `Remove ${p.name} from ${c.name}`);
+          rm.addEventListener('click', () => { removing = { circleId: c.id, id: p.id }; renderPeople(); });
+          li.append(el('span', 'mem-name', p.name), rm);
+          list.append(li);
+        }
+        box.append(list);
+      }
     }
     const leave = btn('btn outline danger', isGroup ? 'Leave group' : 'Unpair');
     leave.addEventListener('click', () => { confirming = c.id; renderPeople(); });
@@ -457,7 +508,8 @@
     const r = await call('joinCode', input.value);
     if (!r.ok) return showErr(errId, r.error);
     input.value = '';
-    toast(r.kind === 'group' ? 'You joined the group' : 'Code sent', r.kind === 'group' ? 'Its name shows once someone in it is online' : 'Pairing as soon as their Titli answers');
+    if (r.kind === 'group' && !r.pending) toast('You joined the group', 'Its name shows once someone in it is online');
+    else toast('Code sent', r.kind === 'group' ? 'You’re in as soon as someone in the group is online' : 'Pairing as soon as their Titli answers');
   }
   joinInput.addEventListener('keydown', e => { if (e.key === 'Enter') $('#joinBtn').click(); });
   $('#joinBtn').addEventListener('click', () => join(joinInput, '#peopleErr'));
@@ -473,8 +525,8 @@
     const name = $('#groupName').value.trim();
     $('#groupName').value = '';
     $('#groupOpen').hidden = false; $('#groupFields').hidden = true; $('#groupHint').hidden = true;
-    api.ui('copy', r.code);
-    toast(`${name} is ready`, 'Code copied');
+    api.ui('copySecret', r.code);
+    toast(`${name} is ready`, 'Invite code copied. It works for 24 hours.');
   });
 
   /* Settings */
@@ -488,6 +540,8 @@
     $('#setMeetings').checked = st.holdInMeetings;
     $('#setAway').checked = st.holdWhenAway;
     $('#setNotify').checked = st.notifyReactions;
+    $('#setReceipts').checked = st.sendReceipts !== false;
+    $('#dataNote').textContent = S.dataProtected ? 'Encrypted with a key your computer keeps' : 'In a file only your account can open';
     $('#setLogin').checked = st.openAtLogin;
     $('#setCapture').checked = st.allowCapture;
     $$('.wing').forEach(w => w.setAttribute('aria-pressed', String(w.dataset.style === st.style)));
@@ -507,7 +561,7 @@
   $('#myName').addEventListener('change', saveName);
   $$('.wing').forEach(w => w.addEventListener('click', () => call('setSettings', { style: w.dataset.style })));
   const bindSwitch = (id, key) => $(id).addEventListener('change', e => call('setSettings', { [key]: e.target.checked }));
-  bindSwitch('#setMeetings', 'holdInMeetings'); bindSwitch('#setAway', 'holdWhenAway'); bindSwitch('#setNotify', 'notifyReactions');
+  bindSwitch('#setMeetings', 'holdInMeetings'); bindSwitch('#setAway', 'holdWhenAway'); bindSwitch('#setNotify', 'notifyReactions'); bindSwitch('#setReceipts', 'sendReceipts');
   bindSwitch('#setLogin', 'openAtLogin'); bindSwitch('#setCapture', 'allowCapture');
   $('#relayToggle').addEventListener('click', () => { relayOpen = !relayOpen; renderSettings(); if (relayOpen) $('#relayUrl').focus(); });
   $('#saveRelay').addEventListener('click', async () => {
@@ -592,7 +646,7 @@
     $('#w2Copy').disabled = !inv;
     $('#w2Status').lastChild.textContent = S.joining.length ? 'Waiting for their Titli to answer…' : 'Waiting for them to enter it…';
   }
-  $('#w2Copy').addEventListener('click', () => { const inv = S.invites[S.invites.length - 1]; if (inv) copy(inv.code, 'Code'); });
+  $('#w2Copy').addEventListener('click', () => { const inv = S.invites[S.invites.length - 1]; if (inv) copyCode(inv.code, 'Code'); });
   $('#w2Join').addEventListener('keydown', e => { if (e.key === 'Enter') $('#w2JoinBtn').click(); });
   $('#w2JoinBtn').addEventListener('click', () => join($('#w2Join'), '#w2Err'));
   $('#w2Later').addEventListener('click', () => { pairStep = false; view = 'main'; selectTab('send'); render(); });

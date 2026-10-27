@@ -1,5 +1,10 @@
 name: Build
 
+# test:    every push and pull request
+# windows: the installer (no secrets)
+# release: the Mac apps, the signed update manifests and publishing. It runs in the "release" environment,
+#          which holds the release keys and can require your approval, so nothing reaches people's computers
+#          unless you've said yes. Every action is pinned to an exact commit.
 on:
   push:
     branches: [main]
@@ -7,88 +12,18 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 20, cache: npm }
       - run: npm ci
       - run: npm test
-
-  # Mac and Windows minutes are expensive on private repos, so the apps are built only for tags or on demand
-  mac:
-    needs: test
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    runs-on: macos-14
-    permissions:
-      contents: write   # to attach the .dmg to a tag's release
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm }
-      - run: npm ci
-
-      # every build gets a new version (0.1.<run number>), so installed apps can tell it's newer
-      - name: Set the version
-        run: |
-          V="$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}"
-          npm pkg set version="$V"
-          echo "VERSION=$V" >> "$GITHUB_ENV"
-
-      - name: Build the presence helper
-        run: npm run build:helper
-      - name: Smoke test
-        run: TITLI_SMOKE_OUT="$PWD/dist/smoke" npx electron scripts/smoke.js
-        timeout-minutes: 3
-
-      # one build for Apple Silicon and one for Intel, each about half the size of a universal app
-      - name: Build the app
-        run: |
-          set -o pipefail
-          # one at a time: two disk images built at once both mount as /Volumes/Titli and collide
-          if ! { npx electron-builder --mac --arm64 --publish never && npx electron-builder --mac --x64 --publish never; } 2>&1 | tee builder.log; then
-            # surface the end of the log as an annotation, which is readable without downloading logs
-            msg="$(tail -n 40 builder.log | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
-            echo "::error title=electron-builder failed::$msg"
-            exit 1
-          fi
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-
-      - name: Check both apps are signed, complete and versioned
-        run: |
-          for app in dist/mac*/Titli.app; do
-            arch="$(lipo -archs "$app/Contents/MacOS/Titli")"
-            case "$arch" in arm64) echo "ARM_APP=$app" >> "$GITHUB_ENV";; x86_64) echo "X64_APP=$app" >> "$GITHUB_ENV";; esac
-            codesign --verify --deep --strict --verbose=2 "$app"
-            test -x "$app/Contents/Resources/bin/titli-presence"
-            test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = "$VERSION"
-            echo "$app: $arch, $VERSION"
-          done
-          ls -lh dist/*.dmg
-
-      - name: Zip the apps for in-app updates
-        run: |
-          test -n "$ARM_APP" && test -n "$X64_APP"
-          ditto -c -k --sequesterRsrc --keepParent "$ARM_APP" "dist/Titli-$VERSION-arm64-mac.zip"
-          ditto -c -k --sequesterRsrc --keepParent "$X64_APP" "dist/Titli-$VERSION-x64-mac.zip"
-          ls -lh dist/*.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Titli-mac-${{ env.VERSION }}
-          path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/smoke/*.png
-
-      - name: Attach to this repo's release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.dmg
 
   windows:
     needs: test
@@ -98,11 +33,12 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 20, cache: npm }
       - run: npm ci
 
+      # every build gets a new version (0.1.<run number>), so installed apps can tell it's newer
       - name: Set the version
         run: |
           V="$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}"
@@ -117,10 +53,11 @@ jobs:
           echo "$out"
           node -e "const j=JSON.parse(process.argv[1]); if (!('camera' in j && 'mic' in j && 'fullscreen' in j)) process.exit(1)" "$out"
 
+      # the build machine has no graphics card; the software fallback is switched on for this test only
       - name: Smoke test
         id: smoke
         continue-on-error: true
-        run: TITLI_SMOKE_OUT="$(pwd -W)/dist/smoke" npx electron scripts/smoke.js
+        run: TITLI_SMOKE_OUT="$(pwd -W)/dist/smoke" npx electron --enable-unsafe-swiftshader scripts/smoke.js
         timeout-minutes: 3
 
       - name: Build the installer
@@ -141,54 +78,112 @@ jobs:
           ls -l dist/*.exe
           if [ "${{ steps.smoke.outcome }}" != "success" ]; then echo "::warning::The Windows smoke test didn't pass on the build machine. The installer was still built."; fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Titli-windows-${{ env.VERSION }}
           path: |
             dist/*.exe
             dist/smoke/*.png
 
-  # signs the update manifests and publishes everything to the public repo the apps update from
-  publish:
-    needs: [mac, windows]
-    if: always() && needs.mac.result == 'success'
-    runs-on: ubuntu-latest
-    env:
-      CAN_SIGN_UPDATES: ${{ secrets.UPDATE_SIGNING_KEY != '' }}
-      CAN_PUBLISH: ${{ secrets.RELEASES_TOKEN != '' }}
+  release:
+    needs: [test, windows]
+    if: always() && needs.test.result == 'success' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    runs-on: macos-14
+    environment: release
+    concurrency: release
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
 
       - name: Set the version
         run: |
           V="$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}"
+          npm pkg set version="$V"
           echo "VERSION=$V" >> "$GITHUB_ENV"
-          { echo 'NOTES<<NOTES_END'; git log -1 --format=%s; echo 'NOTES_END'; } >> "$GITHUB_ENV"
+          # the release notes are the commit's first line (a random end marker, so no line in it can end the block early)
+          EOF_MARK="NOTES_$(openssl rand -hex 12)"
+          { echo "NOTES<<$EOF_MARK"; git log -1 --format=%s; echo "$EOF_MARK"; } >> "$GITHUB_ENV"
 
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: Titli-*-${{ env.VERSION }}
-          path: dist
-          merge-multiple: true
+      - name: Build the presence helper
+        run: npm run build:helper
+      - name: Smoke test
+        run: TITLI_SMOKE_OUT="$PWD/dist/smoke" npx electron scripts/smoke.js
+        timeout-minutes: 3
 
-      - name: Sign the update manifests
-        if: env.CAN_SIGN_UPDATES == 'true'
+      # Titli's own certificate, from the release keys: the same signature on every version, so the Keychain keeps
+      # trusting updates. Without the keys the build is signed ad hoc, as before.
+      - name: Load the signing certificate
+        env:
+          RELEASE_KEYS: ${{ secrets.RELEASE_KEYS }}
         run: |
-          ls -l dist
+          if [ -z "$RELEASE_KEYS" ]; then echo "::warning::RELEASE_KEYS isn't in the release environment yet, so the Mac app is signed ad hoc."; exit 0; fi
+          node -e '
+            const b = JSON.parse(Buffer.from(process.env.RELEASE_KEYS, "base64").toString("utf8"));
+            console.log("::add-mask::" + b.macP12Password);
+            require("fs").writeFileSync(process.env.RUNNER_TEMP + "/titli.p12", Buffer.from(b.macP12, "base64"), { mode: 0o600 });
+            require("fs").writeFileSync(process.env.RUNNER_TEMP + "/titli.pass", b.macP12Password, { mode: 0o600 });'
+          scripts/ci-import-cert.sh "$RUNNER_TEMP/titli.p12" "$(cat "$RUNNER_TEMP/titli.pass")"
+          rm -f "$RUNNER_TEMP/titli.p12" "$RUNNER_TEMP/titli.pass"
+
+      # one build for Apple Silicon and one for Intel, each about half the size of a universal app
+      - name: Build the app
+        run: |
+          set -o pipefail
+          # one at a time: two disk images built at once both mount as /Volumes/Titli and collide
+          if ! { npx electron-builder --mac --arm64 --publish never && npx electron-builder --mac --x64 --publish never; } 2>&1 | tee builder.log; then
+            msg="$(tail -n 40 builder.log | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            echo "::error title=electron-builder failed::$msg"
+            exit 1
+          fi
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Check both apps are signed, complete and versioned
+        run: |
+          for app in dist/mac*/Titli.app; do
+            arch="$(lipo -archs "$app/Contents/MacOS/Titli")"
+            case "$arch" in arm64) echo "ARM_APP=$app" >> "$GITHUB_ENV";; x86_64) echo "X64_APP=$app" >> "$GITHUB_ENV";; esac
+            codesign --verify --deep --strict --verbose=2 "$app"
+            if [ -n "${TITLI_SIGN_IDENTITY:-}" ]; then
+              codesign -dv --verbose=2 "$app" 2>&1 | grep -q 'Authority=Titli Self-Signed'
+              codesign -d -r- "$app" 2>&1 | grep 'designated'
+            fi
+            test -x "$app/Contents/Resources/bin/titli-presence"
+            test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = "$VERSION"
+            echo "$app: $arch, $VERSION"
+          done
+          ls -lh dist/*.dmg
+
+      - name: Zip the apps for in-app updates
+        run: |
+          test -n "$ARM_APP" && test -n "$X64_APP"
+          ditto -c -k --sequesterRsrc --keepParent "$ARM_APP" "dist/Titli-$VERSION-arm64-mac.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$X64_APP" "dist/Titli-$VERSION-x64-mac.zip"
+          ls -lh dist/*.zip
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.windows.result == 'success'
+        with:
+          name: Titli-windows-${{ env.VERSION }}
+          path: dist
+
+      # the original key (what Titli 0.1.32 checks) and the release key; see scripts/make-manifest.js
+      - name: Sign the update manifests
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          RELEASE_KEYS: ${{ secrets.RELEASE_KEYS }}
+        run: |
           node scripts/make-manifest.js mac
           if [ -f "dist/Titli-Setup-$VERSION-x64.exe" ]; then
             node scripts/make-manifest.js win
           else
             echo "::warning::The Windows build didn't finish, so only the Mac update is published this time."
           fi
-        env:
-          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
 
       - name: Publish to titli-releases
-        if: env.CAN_PUBLISH == 'true' && env.CAN_SIGN_UPDATES == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           repository: asrohit723-jpg/titli-releases
           token: ${{ secrets.RELEASES_TOKEN }}
@@ -202,6 +197,16 @@ jobs:
             dist/*.exe
             dist/latest-*.json
 
-      - name: Say what's missing
-        if: env.CAN_PUBLISH != 'true' || env.CAN_SIGN_UPDATES != 'true'
-        run: echo "::warning::Built Titli $VERSION but didn't publish it. Add the RELEASES_TOKEN and UPDATE_SIGNING_KEY secrets (see README, In-app updates)."
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: Titli-mac-${{ env.VERSION }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-*.json
+            dist/smoke/*.png
+
+      - name: Remove the signing keychain
+        if: always()
+        run: if [ -n "${TITLI_SIGN_KEYCHAIN:-}" ]; then security delete-keychain "$TITLI_SIGN_KEYCHAIN" || true; fi

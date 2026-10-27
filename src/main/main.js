@@ -3,7 +3,8 @@
 // ⌥ Space / Ctrl+Alt+Space anywhere) to open the panel; right-click it to send a quick note without
 // opening anything.
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, powerMonitor, Notification, nativeImage, clipboard, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, powerMonitor, Notification, nativeImage, clipboard, shell, safeStorage } = require('electron');
+const { spawnSync } = require('child_process');
 const path = require('path');
 const { Store } = require('../core/store');
 const { NtfyRelay } = require('../core/relay');
@@ -37,8 +38,30 @@ const log = (...a) => { if (DEV || TEST_UPDATE) console.log('[titli]', ...a); };
 app.on('second-instance', () => showPanel());
 app.on('window-all-closed', e => e.preventDefault()); // a menu-bar app keeps running
 
+// Saved data (your keys, people and notes) is encrypted with a key the system keeps: Windows ties it to
+// your account; on a Mac it lives in the Keychain. A Mac only hands that key back without asking for your
+// password if the app is signed the same way every time, so an ad-hoc signed build keeps a plain file
+// (readable only by you) rather than prompting after every update.
+function signedForKeychain() {
+  if (!MAC) return true;
+  const exe = app.getPath('exe'), i = exe.indexOf('.app/Contents/MacOS/');
+  if (i < 0) return false;
+  try {
+    const r = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=2', exe.slice(0, i + 4)], { encoding: 'utf8', timeout: 5000 });
+    const out = `${r.stdout || ''}${r.stderr || ''}`;
+    return r.status === 0 && !/Signature=adhoc/.test(out) && /Authority=/.test(out);
+  } catch (e) { return false; }
+}
+function dataLock() {
+  if (!app.isPackaged || process.env.TITLI_SMOKE || !(MAC || WIN)) return { crypt: null, encrypt: false };
+  const crypt = { name: 'safeStorage', encrypt: s => safeStorage.encryptString(s), decrypt: b => safeStorage.decryptString(b) };
+  let encrypt = false;
+  try { encrypt = signedForKeychain() && safeStorage.isEncryptionAvailable(); } catch (e) { encrypt = false; }
+  return { crypt, encrypt };
+}
+
 app.whenReady().then(() => {
-  store = new Store(path.join(app.getPath('userData'), 'titli.json'));
+  store = new Store(path.join(app.getPath('userData'), 'titli.json'), dataLock());
   store.load();
   const relay = new NtfyRelay({ server: store.state.settings.relay });
   relay.on('warn', e => log('relay:', e.message));
@@ -71,6 +94,16 @@ app.whenReady().then(() => {
   if (!shortcut) log('no global shortcut available');
   applyLoginItem();
 
+  // TITLI_TEST_DATA=write|read: CI checks the saved data stays readable (and encrypted) across versions, then quits
+  if (process.env.TITLI_TEST_DATA) {
+    const mode = process.env.TITLI_TEST_DATA;
+    if (mode === 'write') { store.state.quick = ['keychain-check', ...store.state.quick.filter(q => q !== 'keychain-check')]; store.saveNow(); }
+    let raw = ''; try { raw = require('fs').readFileSync(store.file, 'utf8'); } catch (e) { raw = ''; }
+    console.log(`[titli] data ${mode}: encrypted=${store.encrypt} onDiskEncrypted=${/"titliEncrypted":1/.test(raw)} marker=${store.state.quick.includes('keychain-check')} unlockFailed=${store.unlockFailed} version=${app.getVersion()}`);
+    setTimeout(() => app.exit(0), 300);
+    return;
+  }
+  if (store.unlockFailed) setTimeout(() => notify('Titli started fresh', 'It couldn’t unlock what it had saved on this computer. Pair again with your people.'), 1500);
   if (!store.state.me.name && !TEST_UPDATE) setTimeout(showPanel, 600); // first run: say hello
   if (TEST_UPDATE) updater.check({ manual: true }).then(() => { log('test update: status', updater.state.status, updater.state.latest); return updater.update(); }).then(r => log('test update: result', JSON.stringify(r), updater.state.errorDetail || ''));
   if (process.env.TITLI_SMOKE) global.__titli = { panel, overlay, core, delivery, watcher, updater, showPanel, preview, store };
@@ -172,7 +205,7 @@ function togglePanel() {
 
 /* ---------------- talking to the panel ---------------- */
 
-const CORE_CALLS = new Set(['setName', 'setSettings', 'addQuick', 'removeQuick', 'reorderQuick', 'createInvite', 'cancelInvite', 'joinCode', 'createGroup', 'leave', 'send']);
+const CORE_CALLS = new Set(['setName', 'setSettings', 'addQuick', 'removeQuick', 'reorderQuick', 'createInvite', 'createGroupInvite', 'cancelInvite', 'joinCode', 'createGroup', 'leave', 'removeMember', 'send']);
 
 function fullState() {
   const snap = core.snapshot();
@@ -182,6 +215,7 @@ function fullState() {
     presence: { busy: p.busy, reason: p.reason, text: p.reason ? presence.REASON_TEXT[p.reason] : null, helper: watcher.helperOk },
     shortcut: shortcut ? shortcut[1] : null,
     platform: process.platform,
+    dataProtected: !!(store && store.encrypt),
     version: app.getVersion(),
     update: updater ? updater.snapshot() : null
   };
@@ -215,12 +249,21 @@ function wireIpc() {
     if (action === 'hide') panel.hide();
     else if (action === 'quit') app.quit();
     else if (action === 'copy' && typeof arg === 'string' && arg.length < 4000) clipboard.writeText(arg);
+    else if (action === 'copySecret' && typeof arg === 'string' && arg.length < 100) copySecret(arg);
     else if (action === 'open' && typeof arg === 'string' && /^https:\/\/(github\.com|docs\.ntfy\.sh)\//.test(arg)) shell.openExternal(arg);
     else if (action === 'preview') preview(typeof arg === 'string' ? arg : null);
     else if (action === 'checkUpdate') updater.check({ manual: true });
     else if (action === 'installUpdate') updater.update();
     return true;
   });
+}
+
+// an invite code: copied for pasting, then wiped from the clipboard after two minutes if it's still there
+let clipTimer = null;
+function copySecret(text) {
+  clipboard.writeText(text);
+  clearTimeout(clipTimer);
+  clipTimer = setTimeout(() => { if (clipboard.readText() === text) clipboard.clear(); }, 2 * 60 * 1000);
 }
 
 // lands a butterfly on your own screen, to see how it looks or to film it
@@ -248,6 +291,8 @@ function wireNotifications() {
   core.on('paired', ({ name }) => notify('Paired', `You and ${name} can send each other butterflies now.`));
   core.on('joined', ({ name, group }) => notify(group, `${name} joined the group.`));
   core.on('unpaired', ({ name }) => notify('Titli', `${name} unpaired from you.`));
+  core.on('joinedGroup', ({ group }) => notify(group, 'You’re in. Send the first butterfly.'));
+  core.on('removed', ({ group }) => notify('Titli', `You’re no longer in ${group}.`));
 }
 
 function applyLoginItem() {

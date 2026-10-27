@@ -17,7 +17,12 @@ app.whenReady().then(async () => {
   const errors = [];
   await wait(1500);
   const t = global.__titli;
-  for (const w of [t.panel.webContents]) w.on('console-message', (_e, level, msg) => { if (level >= 2) errors.push(msg); });
+  // Electron 35+ passes one event with .level ('warning' | 'error' | ...) and .message; older ones passed them as arguments
+  const onConsole = prefix => (e, level, msg) => {
+    const lv = e && e.level !== undefined ? e.level : level, text = e && e.message !== undefined ? e.message : msg;
+    if (lv === 'warning' || lv === 'error' || lv >= 2) errors.push(prefix + text);
+  };
+  for (const w of [t.panel.webContents]) w.on('console-message', onConsole(''));
   t.showPanel();
   await wait(2000);   // a fresh window needs a moment for its first paint
   await save(t.panel.webContents, 'panel-onboarding.png');
@@ -30,7 +35,7 @@ app.whenReady().then(async () => {
   t.overlay.on('event', ev => seen.push(ev.type));
   t.preview('Thinking of you');
   await wait(1200);
-  t.overlay.win.webContents.on('console-message', (_e, level, msg) => { if (level >= 2) errors.push('overlay: ' + msg); });
+  t.overlay.win.webContents.on('console-message', onConsole('overlay: '));
   // the longest arrival is 10s of flight plus about 4.5s to land and open its wings
   for (let i = 0; i < 40 && !seen.includes('shown'); i++) await wait(500);
   await wait(1500);

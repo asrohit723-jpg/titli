@@ -36,7 +36,8 @@ test('codes: format, parse and derive', () => {
   assert.match(c.code, /^P[0-9A-Z]{3}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/);
   assert.deepEqual(codes.parseCode(c.code.toLowerCase().replace(/-/g, ' ')).raw, c.raw);
   assert.equal(codes.parseCode('hello'), null);
-  assert.equal(codes.parseCode('G' + 'U'.repeat(15)).kind, 'group'); // U is read as V
+  assert.equal(codes.parseCode('G' + 'U'.repeat(15)).kind, 'legacyGroup'); // U is read as V
+  assert.equal(codes.parseCode('H' + 'U'.repeat(15)).kind, 'group');
   const g = codes.randomCode('group');
   assert.equal(codes.parseCode(g.code).kind, 'group');
   const t1 = codes.topicFor(codes.inviteSecret(c.raw)), t2 = codes.topicFor(codes.inviteSecret(c.raw));
@@ -137,15 +138,18 @@ test('groups: create, join by code, names and fan-out', async t => {
   t.after(async () => { rohit.stop(); amma.stop(); appa.stop(); await ntfy.close(); });
 
   const g = rohit.createGroup('Family');
-  assert.ok(g.ok && g.code.startsWith('G'));
+  assert.ok(g.ok && g.code.startsWith('H'));
   assert.equal(rohit.send({ circleId: g.circleId }).ok, false, 'empty group');
   await until(() => rohit.relayStatus === 'online', 4000, 'online');
-  assert.ok(amma.joinCode(g.code).ok);
-  assert.equal(amma.joinCode(g.code).ok, false, 'already in it');
+  const j = amma.joinCode(g.code);
+  assert.ok(j.ok && j.pending);
   appa.joinCode(g.code.toLowerCase());
+  await until(() => amma.s.circles.length === 1 && appa.s.circles.length === 1, 5000, 'both joined');
+  assert.equal(amma.joinCode(g.code).ok, false, 'already in it');
   await until(() => rohit.snapshot().circles[0].members.length === 2, 5000, 'members known');
-  await until(() => amma.snapshot().circles[0].name === 'Family' && appa.snapshot().circles[0].name === 'Family', 5000, 'group name learned');
-  await until(() => amma.snapshot().circles[0].members.length === 2, 5000, 'amma knows everyone');
+  assert.equal(amma.snapshot().circles[0].name, 'Family');
+  await until(() => amma.snapshot().circles[0].members.length === 2 && appa.snapshot().circles[0].members.length === 2, 5000, 'everyone knows everyone');
+  assert.ok(rohit.snapshot().circles[0].secure && amma.snapshot().circles[0].secure);
 
   rohit.send({ circleId: g.circleId, text: 'Lunch time? 🍱' });
   await until(() => amma.s.inbox.length === 1 && appa.s.inbox.length === 1, 4000, 'fan-out');
@@ -198,3 +202,31 @@ test('store survives a corrupt file', () => {
   const st = new Store(f); const s = st.load();
   assert.ok(s.me.id && Array.isArray(s.quick) && s.quick.length > 0);
 });
+
+test('store: encrypted when the system offers a key, plain file migrates, a lost key starts fresh', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-'));
+  const f = path.join(dir, 'titli.json');
+  const crypto = require('crypto');
+  const key = crypto.randomBytes(32);
+  const crypt = {
+    name: 'test',
+    encrypt: s => { const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', key, iv); const ct = Buffer.concat([c.update(s, 'utf8'), c.final()]); return Buffer.concat([iv, ct, c.getAuthTag()]); },
+    decrypt: b => { const d = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12)); d.setAuthTag(b.subarray(b.length - 16)); return Buffer.concat([d.update(b.subarray(12, b.length - 16)), d.final()]).toString('utf8'); }
+  };
+  // an older, plain file
+  const plain = new Store(f); plain.load(); plain.state.me.name = 'Rohit'; plain.state.quick.push('Secret note'); plain.saveNow();
+  const st = new Store(f, { crypt }); st.load();
+  assert.equal(st.state.me.name, 'Rohit');
+  st.saveNow();
+  const onDisk = fs.readFileSync(f, 'utf8');
+  assert.ok(!onDisk.includes('Rohit') && !onDisk.includes('Secret note'), 'nothing readable on disk');
+  const again = new Store(f, { crypt }); again.load();
+  assert.equal(again.state.me.name, 'Rohit');
+  // without the key: start fresh, keep the old file aside
+  const lost = new Store(f, { crypt: { name: 'x', encrypt: crypt.encrypt, decrypt: () => { throw new Error('denied'); } } });
+  lost.load();
+  assert.equal(lost.unlockFailed, true);
+  assert.equal(lost.state.me.name, '');
+  assert.ok(fs.readdirSync(dir).some(n => n.startsWith('titli.locked-')));
+});
+

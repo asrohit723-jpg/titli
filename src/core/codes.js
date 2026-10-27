@@ -26,8 +26,11 @@ function normalize(input) {
   return String(input || '').toUpperCase().replace(/[\s\-_.]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1').replace(/U/g, 'V');
 }
 
+// P = pair invite, H = group invite (24 hours), G = a group made by Titli 0.1.32 or earlier (the code is its secret)
+const KIND = { P: 'pair', H: 'group', G: 'legacyGroup' };
+
 function randomCode(kind) {
-  const prefix = kind === 'group' ? 'G' : 'P';
+  const prefix = kind === 'group' ? 'H' : 'P';
   const bytes = crypto.randomBytes(15);
   let s = prefix;
   for (let i = 0; i < 15; i++) s += ALPHA[bytes[i] & 31];
@@ -36,9 +39,9 @@ function randomCode(kind) {
 
 function parseCode(input) {
   const raw = normalize(input);
-  if (raw.length !== 16 || !/^[PG]/.test(raw)) return null;
+  if (raw.length !== 16 || !KIND[raw[0]]) return null;
   for (const ch of raw.slice(1)) if (!ALPHA.includes(ch)) return null;
-  return { raw, code: format(raw), kind: raw[0] === 'G' ? 'group' : 'pair' };
+  return { raw, code: format(raw), kind: KIND[raw[0]] };
 }
 
 function derive(secret, label) {
@@ -53,7 +56,7 @@ const keyFor = secret => derive(secret, 'key');
 const newSecret = () => crypto.randomBytes(32).toString('hex');
 const newId = (bytes = 9) => crypto.randomBytes(bytes).toString('base64url');
 
-// a pair invite gets its own short-lived channel; a group code is the group's secret itself
+// an invite (pair or group) gets its own short-lived channel; an old G… group code was the group's secret itself
 const inviteSecret = raw => derive(raw, 'invite');
 const groupSecret = raw => derive(raw, 'group').toString('hex');
 
