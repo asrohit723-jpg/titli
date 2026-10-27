@@ -43,11 +43,14 @@ function defaults() {
 // crypt (optional): { name, encrypt(string) -> Buffer, decrypt(Buffer) -> string }, e.g. Electron's safeStorage,
 // which keeps its key in the macOS Keychain or with Windows (DPAPI). Then the file holds only ciphertext.
 class Store {
-  // encrypt: write encrypted from now on (an already-encrypted file always stays encrypted)
-  constructor(file, { crypt = null, encrypt = !!crypt } = {}) {
+  // encrypt: true = write encrypted; false = write a plain file (an encrypted one is read with crypt, then saved
+  // plain); left out = follow the file (an encrypted file stays encrypted)
+  constructor(file, { crypt = null, encrypt } = {}) {
     this.file = file;
     this.crypt = crypt;
-    this.encrypt = !!(crypt && encrypt);
+    this.mode = encrypt;
+    this.encrypt = !!(crypt && (encrypt === undefined ? true : encrypt));
+    this.migrated = false;
     this.state = null;
     this.unlockFailed = false;
     this._timer = null;
@@ -61,8 +64,9 @@ class Store {
     if (!data || data.titliEncrypted !== 1) return data;
     try {
       if (!this.crypt) throw new Error('no key');
-      this.encrypt = true;
-      return JSON.parse(this.crypt.decrypt(Buffer.from(String(data.data), 'base64')));
+      const plain = JSON.parse(this.crypt.decrypt(Buffer.from(String(data.data), 'base64')));
+      if (this.mode === undefined) this.encrypt = true; else this.migrated = !this.encrypt;
+      return plain;
     } catch (e) {
       // the system won't give us the key (a new computer, a reset keychain): keep the file aside, start fresh
       this.unlockFailed = true;
@@ -83,6 +87,8 @@ class Store {
     if (!this.state.quickFor || typeof this.state.quickFor !== 'object' || Array.isArray(this.state.quickFor)) this.state.quickFor = {};
     // scheduling was removed; drop what earlier versions saved for it
     delete this.state.schedules; delete this.state.lastScheduleCheck;
+    // read from an encrypted file but meant to be plain now: save it that way straight away, so the key is never needed again
+    if (this.migrated) { this.saveNow(); this.migrated = false; }
     return this.state;
   }
 

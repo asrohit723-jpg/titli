@@ -4,7 +4,6 @@
 // opening anything.
 
 const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, powerMonitor, Notification, nativeImage, clipboard, shell, safeStorage } = require('electron');
-const { spawnSync } = require('child_process');
 const path = require('path');
 const { Store } = require('../core/store');
 const { NtfyRelay } = require('../core/relay');
@@ -38,25 +37,17 @@ const log = (...a) => { if (DEV || TEST_UPDATE) console.log('[titli]', ...a); };
 app.on('second-instance', () => showPanel());
 app.on('window-all-closed', e => e.preventDefault()); // a menu-bar app keeps running
 
-// Saved data (your keys, people and notes) is encrypted with a key the system keeps: Windows ties it to
-// your account; on a Mac it lives in the Keychain. A Mac only hands that key back without asking for your
-// password if the app is signed the same way every time, so an ad-hoc signed build keeps a plain file
-// (readable only by you) rather than prompting after every update.
-function signedForKeychain() {
-  if (!MAC) return true;
-  const exe = app.getPath('exe'), i = exe.indexOf('.app/Contents/MacOS/');
-  if (i < 0) return false;
-  try {
-    const r = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=2', exe.slice(0, i + 4)], { encoding: 'utf8', timeout: 5000 });
-    const out = `${r.stdout || ''}${r.stderr || ''}`;
-    return r.status === 0 && !/Signature=adhoc/.test(out) && /Authority=/.test(out);
-  } catch (e) { return false; }
-}
+// Saved data (your keys, people and notes):
+//   Windows: encrypted with a key Windows keeps for your account (DPAPI). It never asks for anything.
+//   Mac: a file only your account can open. The Keychain would ask for your Mac password after updates (without
+//     a paid Apple developer ID, macOS ties Keychain access to each exact build), and a frozen app waiting on a
+//     password prompt is worse. Data that 0.1.45-0.1.51 encrypted is read once (the Keychain may ask one last
+//     time) and saved back as a plain file, so the Keychain is never needed again.
 function dataLock() {
   if (!app.isPackaged || process.env.TITLI_SMOKE || !(MAC || WIN)) return { crypt: null, encrypt: false };
   const crypt = { name: 'safeStorage', encrypt: s => safeStorage.encryptString(s), decrypt: b => safeStorage.decryptString(b) };
   let encrypt = false;
-  try { encrypt = signedForKeychain() && safeStorage.isEncryptionAvailable(); } catch (e) { encrypt = false; }
+  if (WIN) { try { encrypt = safeStorage.isEncryptionAvailable(); } catch (e) { encrypt = false; } }
   return { crypt, encrypt };
 }
 

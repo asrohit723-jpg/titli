@@ -18,7 +18,7 @@ and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 - **A different flight every time**: it arrives one of 8 ways (a wide sweep, a lazy loop, a figure eight, a dive, a fly-by from beside you...) and leaves one of 6, each re-shaped on every visit and flown in a calm, easy or playful mood. It never repeats its last few routes.
 - **Activity**: everything you sent and received in one timeline, with seen receipts and reactions.
 - **No accounts**: everything stays on your computer. Butterflies travel through a free relay ([ntfy](https://ntfy.sh)), encrypted on your laptop so the relay can't read them.
-- **Private by design**: pairing uses a key exchange, so an invite code someone else sees is useless; every message is signed, so nobody can send as you; group keys change when someone leaves; your saved data is encrypted with a key your computer keeps. See [Security](#security).
+- **Private by design**: pairing uses a key exchange, so an invite code someone else sees is useless; every message is signed, so nobody can send as you; group keys change when someone leaves; and your saved data stays in a file only your account can open (encrypted on Windows). See [Security](#security).
 
 ## Run it on your Mac (from source)
 
@@ -153,7 +153,7 @@ run your own ntfy server and set it in Settings → Relay (everyone paired must 
 | Someone in a group pretends to be someone else | Every message is signed by its sender's own key |
 | Someone left or was removed but kept the key | A new key for everyone else; old keys and codes let no one back in |
 | Someone between you (rare, needs the code *and* to act first) | Compare the **Safety code** in People → ••• with the other person |
-| Malware or another account reads your files | Saved data is encrypted with a key your computer keeps (Windows; Macs with the release-signed app) |
+| Another account on your computer reads your files | Saved data is in a file only your account can open; on Windows it's also encrypted with a key Windows keeps for you |
 | A fake update | Updates must be signed by a key only GitHub's approved release job has |
 | Old messages replayed | Refused after 14 hours, and duplicates are ignored |
 

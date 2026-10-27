@@ -319,3 +319,19 @@ test('people paired before gestures keep their hearts, and untouched old default
   const ownAgain = new Store(path.join(dir, 'own.json')); ownAgain.load();
   assert.deepEqual(ownAgain.state.quick, ['Miss you already', 'Lunch?']);
 });
+
+test('store: a Mac reads data an earlier version encrypted, then keeps it as a plain file and never needs the key again', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-'));
+  const f = path.join(dir, 'titli.json');
+  let calls = 0;
+  const crypt = { name: 'test', encrypt: s => Buffer.from(s, 'utf8').reverse(), decrypt: b => { calls++; return Buffer.from(b).reverse().toString('utf8'); } };
+  const enc = new Store(f, { crypt, encrypt: true }); enc.load(); enc.state.me.name = 'Rohit'; enc.saveNow();
+  assert.match(fs.readFileSync(f, 'utf8'), /titliEncrypted/);
+  const mac = new Store(f, { crypt, encrypt: false }); mac.load();
+  assert.equal(mac.state.me.name, 'Rohit');
+  assert.equal(calls, 1);
+  assert.ok(!/titliEncrypted/.test(fs.readFileSync(f, 'utf8')), 'saved back as a plain file at once');
+  const next = new Store(f, { crypt, encrypt: false }); next.load();
+  assert.equal(next.state.me.name, 'Rohit');
+  assert.equal(calls, 1, 'the key is not needed again');
+});
