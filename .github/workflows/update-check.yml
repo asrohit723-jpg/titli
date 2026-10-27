@@ -91,18 +91,26 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
-          set -e
-          build() { npm pkg set version="$1"; npx electron-builder --mac --arm64 --dir --publish never > "build-$1.log" 2>&1 || { tail -40 "build-$1.log"; exit 1; }; mkdir -p "$RUNNER_TEMP/$2"; ditto dist/mac-arm64/Titli.app "$RUNNER_TEMP/$2/Titli.app"; rm -rf dist/mac-arm64; }
+          note() { msg="$(printf '%s' "$2" | tail -n 40 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; echo "::$1::$msg"; }
+          step() { echo "+ $*" >> steps.log; "$@" >> steps.log 2>&1 || { note error "$(sw_vers -productVersion) failed: $*%0A$(tail -n 30 steps.log)"; exit 1; }; }
+          build() {
+            step npm pkg set version="$1"
+            step npx electron-builder --mac --arm64 --dir --publish never
+            app="$(ls -d dist/mac*/Titli.app | head -1)"; test -n "$app" || { note error "no app built: $(ls dist)"; exit 1; }
+            mkdir -p "$RUNNER_TEMP/$2"; step ditto "$app" "$RUNNER_TEMP/$2/Titli.app"; rm -rf dist/mac*
+          }
           build 0.1.1 adhoc
-          openssl req -x509 -newkey rsa:3072 -sha256 -days 30 -nodes -keyout k.pem -out c.pem -subj "/CN=Titli Self-Signed/O=Titli" \
-            -addext "basicConstraints=critical,CA:false" -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
-          openssl pkcs12 -export -inkey k.pem -in c.pem -name "Titli Self-Signed" -out t.p12 -passout pass:throwaway -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 2>/dev/null
-          scripts/ci-import-cert.sh t.p12 throwaway
+          step openssl version
+          step openssl req -x509 -newkey rsa:3072 -sha256 -days 30 -nodes -keyout k.pem -out c.pem -subj "/CN=Titli Self-Signed/O=Titli" \
+            -addext "basicConstraints=critical,CA:false" -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning"
+          step openssl pkcs12 -export -inkey k.pem -in c.pem -name "Titli Self-Signed" -out t.p12 -passout pass:throwaway -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+          step scripts/ci-import-cert.sh t.p12 throwaway
           export TITLI_SIGN_IDENTITY="$(grep TITLI_SIGN_IDENTITY "$GITHUB_ENV" | tail -1 | cut -d= -f2)"
           build 0.1.2 signedA
           build 0.1.3 signedB
-          codesign -d -r- "$RUNNER_TEMP/signedA/Titli.app" 2>&1 | grep designated
-          codesign -d -r- "$RUNNER_TEMP/signedB/Titli.app" 2>&1 | grep designated
+          ra="$(codesign -d -r- "$RUNNER_TEMP/signedA/Titli.app" 2>&1 | grep designated)"; rb="$(codesign -d -r- "$RUNNER_TEMP/signedB/Titli.app" 2>&1 | grep designated)"
+          note notice "signed builds' requirement (must match):%0A$ra%0A$rb"
+          test "$ra" = "$rb"
           ditto -c -k --keepParent "$RUNNER_TEMP/signedB/Titli.app" signedB.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: 'signed-${{ matrix.os }}', path: signedB.zip }
