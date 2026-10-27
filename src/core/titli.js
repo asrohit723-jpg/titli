@@ -1,5 +1,5 @@
 'use strict';
-// The heart of Titli: people and groups ("circles"), pairing, sending, receiving, receipts and schedules.
+// The heart of Titli: people and groups ("circles"), pairing, sending, receiving and receipts.
 // Pure Node, no Electron, so it can be tested on its own.
 //
 // Every circle (a pair or a group) has a random secret. Its relay topic and its encryption key are
@@ -12,13 +12,11 @@
 const { EventEmitter } = require('events');
 const codes = require('./codes');
 const { seal, open } = require('./seal');
-const schedule = require('./schedule');
 
 const MAX_TEXT = 60, MAX_NAME = 24, MAX_QUICK = 12, MAX_SENT = 40, MAX_RECEIVED = 100, MAX_HANDLED = 800, MAX_INBOX = 50, MAX_INVITES = 5;
 const INVITE_TTL = 24 * 3600 * 1000, USED_INVITE_TTL = 10 * 60 * 1000;
 const STYLES = ['rose', 'peony', 'gold', 'midnight'];
 const REACTIONS = ['❤️', '🥰', '😘', '🤗', '😊', 'butterfly'];
-const REPEATS = ['once', 'daily', 'weekdays'];
 const RANK = { sending: 0, sent: 1, arrived: 2, seen: 3 };
 
 const clip = (t, n) => Array.from(String(t == null ? '' : t).replace(/\s+/g, ' ').trim()).slice(0, n).join('');
@@ -168,7 +166,6 @@ class TitliCore extends EventEmitter {
     if (!c) return { ok: false, error: 'That person or group is already gone.' };
     this._postCircle(c, { t: 'bye' });
     this.s.circles = this.s.circles.filter(x => x !== c);
-    this.s.schedules = this.s.schedules.filter(s => s.circleId !== c.id);
     // give the goodbye a moment to go out before we stop listening
     setTimeout(() => this._syncTopics(), 1500);
     this._save();
@@ -177,14 +174,14 @@ class TitliCore extends EventEmitter {
 
   /* ---------------- sending ---------------- */
 
-  send({ circleId, text, style, scheduled } = {}) {
+  send({ circleId, text, style } = {}) {
     const c = this._circle(circleId);
     if (!c) return { ok: false, error: 'Pick who to send it to.' };
     const others = Object.keys(c.members).filter(id => id !== this.me.id);
     if (!others.length) return { ok: false, error: c.kind === 'group' ? `No one has joined ${c.name} yet. Share its code first.` : 'They haven’t joined yet.' };
     const t = text == null ? null : (clip(text, MAX_TEXT) || null);
     const msg = { t: 'note', id: codes.newId(), text: t, style: STYLES.includes(style) ? style : this.s.settings.style, at: this.now() };
-    const rec = { id: msg.id, circleId: c.id, text: t, style: msg.style, at: msg.at, scheduled: !!scheduled, rc: {} };
+    const rec = { id: msg.id, circleId: c.id, text: t, style: msg.style, at: msg.at, rc: {} };
     for (const id of others) rec.rc[id] = { st: 'sending', react: null };
     this.s.sent.unshift(rec);
     this.s.sent.length = Math.min(this.s.sent.length, MAX_SENT);
@@ -221,67 +218,6 @@ class TitliCore extends EventEmitter {
     return { ok: true };
   }
 
-  /* ---------------- schedules ---------------- */
-
-  addSchedule({ text, circleId, time, repeat } = {}) {
-    if (!this._circle(circleId)) return { ok: false, error: 'Pick who it goes to.' };
-    if (!schedule.validTime(time)) return { ok: false, error: 'Pick a time.' };
-    const t = text == null ? null : (clip(text, MAX_TEXT) || null);
-    if (text != null && !t) return { ok: false, error: 'Write the note you want to schedule.' };
-    const s = { id: codes.newId(6), text: t, circleId, time, repeat: REPEATS.includes(repeat) ? repeat : 'daily', on: true, last: this._startDay(time) };
-    this.s.schedules.push(s); this._save();
-    return { ok: true, id: s.id };
-  }
-
-  // a time earlier today means "from tomorrow", not "right now"
-  _startDay(time) {
-    const now = new Date(this.now());
-    const [h, m] = time.split(':').map(Number);
-    const today = new Date(now); today.setHours(h, m, 0, 0);
-    return today.getTime() <= now.getTime() ? schedule.dayKey(now) : '';
-  }
-
-  updateSchedule(id, patch = {}) {
-    const s = this.s.schedules.find(x => x.id === id);
-    if (!s) return { ok: false, error: 'That schedule is gone.' };
-    if ('circleId' in patch && !this._circle(patch.circleId)) return { ok: false, error: 'Pick who it goes to.' };
-    if ('time' in patch && !schedule.validTime(patch.time)) return { ok: false, error: 'Pick a time.' };
-    let text = s.text;
-    if ('text' in patch) {
-      text = patch.text == null ? null : (clip(patch.text, MAX_TEXT) || null);
-      if (patch.text != null && !text) return { ok: false, error: 'Write the note you want to schedule.' };
-    }
-    s.text = text;
-    if ('circleId' in patch) s.circleId = patch.circleId;
-    if (REPEATS.includes(patch.repeat)) s.repeat = patch.repeat;
-    if ('time' in patch && patch.time !== s.time) { s.time = patch.time; s.last = this._startDay(s.time); }
-    if (typeof patch.on === 'boolean') s.on = patch.on;
-    this._save();
-    return { ok: true };
-  }
-
-  removeSchedule(id) { this.s.schedules = this.s.schedules.filter(x => x.id !== id); this._save(); return { ok: true }; }
-
-  sendScheduleNow(id) {
-    const s = this.s.schedules.find(x => x.id === id);
-    if (!s) return { ok: false, error: 'That schedule is gone.' };
-    return this.send({ circleId: s.circleId, text: s.text, scheduled: true });
-  }
-
-  checkSchedules() {
-    const now = this.now();
-    const fired = [];
-    for (const { schedule: s, day } of schedule.due(this.s.schedules, now, this.s.lastScheduleCheck)) {
-      s.last = day;
-      if (s.repeat === 'once') s.on = false;
-      const r = this.send({ circleId: s.circleId, text: s.text, scheduled: true });
-      if (r.ok) fired.push(s);
-    }
-    this.s.lastScheduleCheck = now;
-    if (fired.length) this._save();
-    return fired;
-  }
-
   /* ---------------- what the panel sees (no secrets) ---------------- */
 
   snapshot() {
@@ -293,7 +229,6 @@ class TitliCore extends EventEmitter {
       code: c.kind === 'group' ? c.code : undefined, owner: c.owner === me.id, createdAt: c.createdAt || null
     }));
     const nameOf = id => { const c = circles.find(x => x.id === id); return c ? c.name : 'Someone'; };
-    const next = schedule.nextRun(this.s.schedules, this.now());
     return {
       me: { name: me.name },
       settings: { ...this.s.settings },
@@ -302,9 +237,7 @@ class TitliCore extends EventEmitter {
       invites: this.s.invites.filter(i => !i.circleId).map(i => ({ code: i.code, createdAt: i.createdAt })),
       joining: this.s.joining.map(j => ({ code: j.code, createdAt: j.createdAt })),
       quick: this.s.quick.slice(),
-      schedules: this.s.schedules.map(s => ({ ...s, to: nameOf(s.circleId) })),
-      next: next ? { id: next.schedule.id, when: next.when, text: next.schedule.text, to: nameOf(next.schedule.circleId) } : null,
-      sent: this.s.sent.slice(0, 20).map(m => ({ id: m.id, circleId: m.circleId, text: m.text, at: m.at, scheduled: m.scheduled, to: nameOf(m.circleId), status: this._statusOf(m) })),
+      sent: this.s.sent.slice(0, 20).map(m => ({ id: m.id, circleId: m.circleId, text: m.text, at: m.at, to: nameOf(m.circleId), status: this._statusOf(m) })),
       received: this.s.received.filter(r => !r.preview).slice(0, 20).map(r => ({ id: r.id, kind: r.kind, circleId: r.circleId, text: r.text, fromName: r.fromName, circleName: r.circleName, at: r.at, react: r.react || null })),
       inboxCount: this.s.inbox.length,
       lastTo: this.s.lastTo
@@ -461,7 +394,6 @@ class TitliCore extends EventEmitter {
       case 'bye':
         if (c.kind === 'pair') {
           this.s.circles = this.s.circles.filter(x => x !== c);
-          this.s.schedules = this.s.schedules.filter(s => s.circleId !== c.id);
           this._syncTopics();
           this.emit('unpaired', { name: fromName });
         } else {

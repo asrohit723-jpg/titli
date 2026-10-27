@@ -12,7 +12,6 @@ and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 - **Quick notes**: save up to 12 short notes (60 characters max), reorder them, and send one with a click, a number key, or from the menu-bar icon's right-click menu.
 - **One-to-one or groups**: pair with one person, or make a group where everyone gets the butterfly.
 - **Never at a bad moment**: butterflies wait while you're on a call (camera or mic in use), something is full screen, the screen is locked, the laptop is asleep, or you've stepped away. They're also invisible to screen sharing and recordings.
-- **Schedules**: a butterfly at a set time, once, every day or on weekdays. Handy as a gentle reminder. Tap one to change it or send it now.
 - **Activity**: everything you sent and received in one timeline, with seen receipts and reactions.
 - **No accounts**: everything stays on your computer. Butterflies travel through a free relay ([ntfy](https://ntfy.sh)), encrypted on your laptop so the relay can't read them.
 
@@ -97,7 +96,7 @@ workflow artifact; it just isn't published as an update.
 
 | Piece | Where |
 | --- | --- |
-| Pairing, groups, sending, receipts, schedules | `src/core/titli.js` (plain Node, tested) |
+| Pairing, groups, sending, receipts | `src/core/titli.js` (plain Node, tested) |
 | Invite codes and key derivation | `src/core/codes.js` |
 | Encryption (AES-256-GCM) | `src/core/seal.js` |
 | Relay client (ntfy JSON stream, 12-hour catch-up) | `src/core/relay.js` |
@@ -124,6 +123,6 @@ run your own ntfy server and set it in Settings → Relay (everyone paired must 
 ## Tests
 
 ```bash
-npm test                                         # core: pairing, groups, offline catch-up, schedules
+npm test                                         # core: pairing, groups, offline catch-up, updates
 npx electron scripts/smoke.js                     # opens the app, lands a butterfly, saves screenshots to dist/smoke
 ```

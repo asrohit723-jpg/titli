@@ -51,14 +51,10 @@ kbd{font-family:var(--font-body)}
 .field{width:100%; height:46px; padding:0 14px; color:var(--ink); font-size:15px; font-weight:500; outline:none; min-width:0}
 .field:focus, .inline-field:focus-within, .compose:focus-within{border-color:var(--accent)}
 .field.big{height:52px; font-size:16px; border-radius:15px}
-.field.time{height:52px; font-size:26px; font-weight:600; letter-spacing:-.02em; font-variant-numeric:tabular-nums}
 .fieldset{display:flex; flex-direction:column; gap:8px}
 .inline-field{display:flex; align-items:center; gap:8px; height:46px; padding:0 6px 0 14px}
 .inline-field.flat{background:var(--bg)}
 .inline-field input{flex:1; min-width:0; height:100%; border:0; background:transparent; outline:none; font-size:14px; color:var(--ink)}
-.select-wrap{position:relative}
-.select-wrap select{appearance:none; -webkit-appearance:none; height:50px; padding-right:40px; font-size:16.5px; font-weight:400}
-.select-wrap svg{position:absolute; right:15px; top:17px; width:16px; height:16px; color:var(--mist); pointer-events:none}
 
 /* header + tabs */
 .head{display:flex; align-items:center; gap:12px; padding:14px 10px 12px 16px; -webkit-app-region:drag}
@@ -75,7 +71,7 @@ kbd{font-family:var(--font-body)}
 .update-pill svg{width:14px; height:14px}
 .update-pill:disabled{cursor:default; opacity:.85}
 .update-pill:not(:disabled):hover{background:var(--accent); color:var(--on-accent)}
-.tabs{display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:2px; margin:0 16px; padding:3px; background:var(--surface); border-radius:12px}
+.tabs{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:2px; margin:0 16px; padding:3px; background:var(--surface); border-radius:12px}
 .tab{height:34px; border:0; border-radius:9px; background:transparent; color:var(--mist); font-size:13px; font-weight:500; display:flex; align-items:center; justify-content:center; gap:5px}
 .tab[aria-selected="true"]{background:var(--tab-on); color:var(--ink); font-weight:600; box-shadow:var(--tab-shadow)}
 .tab-dot{width:6px; height:6px; border-radius:50%; background:var(--accent)}
@@ -166,7 +162,6 @@ kbd{font-family:var(--font-body)}
 .act-note .heart{width:15px; height:15px; color:var(--accent); flex:none}
 .act-note .bf{width:20px; height:17px; flex:none}
 .act-meta{display:flex; align-items:center; flex-wrap:wrap; gap:0 5px; font-size:12px; color:var(--mist)}
-.act-meta .clock{width:12px; height:12px}
 .stat{display:inline-flex; align-items:center; gap:3px; font-weight:600}
 .stat svg{width:13px; height:13px}
 .stat.seen{color:var(--ok)} .stat.wait{color:var(--warn)} .stat.go{color:var(--mist)}
@@ -177,22 +172,6 @@ kbd{font-family:var(--font-body)}
 .legend .badge{position:static; width:12px; height:12px; border:0}
 .legend .badge svg{width:7px; height:7px}
 .empty-note{margin:0; padding:22px 6px; text-align:center; font-size:13px; line-height:1.5; color:var(--dim)}
-
-/* Schedule */
-.intro{margin:0; font-size:13px; color:var(--mist)}
-.sched-list{list-style:none; margin:-8px 0 0; padding:0; display:flex; flex-direction:column}
-.sch{display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line)}
-.sch:last-child{border-bottom:0}
-.sch.next{margin:4px -12px; padding:12px; border:1px solid var(--line); border-radius:14px; background:var(--surface)}
-.sch-btn{flex:1; min-width:0; display:flex; align-items:flex-start; gap:12px; padding:0; border:0; background:transparent; text-align:left; color:var(--ink)}
-.sch-time{width:70px; flex:none; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1.5}
-.sch-body{display:flex; flex-direction:column; gap:2px; min-width:0}
-.sch-note{display:flex; align-items:center; gap:6px; font-family:var(--font-display); font-variation-settings:"SOFT" 50; font-size:16px; line-height:1.3; overflow-wrap:anywhere}
-.sch-note svg{width:14px; height:14px; color:var(--accent); flex:none}
-.sch-meta{font-size:12px; color:var(--mist)}
-.next-tag{align-self:flex-start; margin-top:3px; font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--link); background:var(--tint); border-radius:999px; padding:2px 8px}
-.sch.off .sch-btn, .sch.off .sch-meta{color:var(--dim)}
-.sch.off .sch-note svg{color:var(--dim)}
 
 /* switches */
 .switch{position:relative; display:inline-flex; flex:none}
@@ -242,8 +221,6 @@ kbd{font-family:var(--font-body)}
 .page-body{display:flex; flex-direction:column; gap:22px; padding:12px 16px 18px}
 .page-body.fill{flex:1; gap:14px}
 .bottom-stack{margin-top:auto; display:flex; flex-direction:column; gap:10px}
-.pair-btns{display:grid; grid-template-columns:1fr 1fr; gap:8px}
-.pair-btns .btn{height:40px; border-radius:13px; font-size:13.5px}
 
 .wing-grid{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px}
 .wing{position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px; height:104px; padding:0; border:1px solid var(--line); border-radius:16px; background:var(--surface); color:var(--mist); font-size:13px; font-weight:500}
@@ -271,9 +248,6 @@ kbd{font-family:var(--font-body)}
 .up-err{display:flex; flex-direction:column; align-items:flex-start; gap:4px; padding:0 14px 12px}
 .foot{display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:14px; border-top:1px solid var(--line)}
 
-.seg{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:2px; padding:3px; background:var(--surface); border-radius:12px}
-.seg button{height:36px; border:0; border-radius:9px; background:transparent; color:var(--mist); font-size:13px; font-weight:500}
-.seg button[aria-pressed="true"]{background:var(--tab-on); color:var(--ink); font-weight:600; box-shadow:var(--tab-shadow)}
 
 /* quick notes editor */
 .qe-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px}

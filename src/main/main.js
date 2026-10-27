@@ -64,10 +64,7 @@ app.whenReady().then(() => {
   delivery.start();
   updater.start();
 
-  // schedules: check twice a minute, and right after waking up
-  core.checkSchedules();
-  setInterval(() => core.checkSchedules(), 20000);
-  powerMonitor.on('resume', () => { relay.restart(); setTimeout(() => core.checkSchedules(), 1500); });
+  powerMonitor.on('resume', () => relay.restart());
   powerMonitor.on('unlock-screen', () => relay.restart());
 
   shortcut = SHORTCUTS.find(([acc]) => { try { return globalShortcut.register(acc, togglePanel); } catch (e) { return false; } }) || null;
@@ -175,7 +172,7 @@ function togglePanel() {
 
 /* ---------------- talking to the panel ---------------- */
 
-const CORE_CALLS = new Set(['setName', 'setSettings', 'addQuick', 'removeQuick', 'reorderQuick', 'createInvite', 'cancelInvite', 'joinCode', 'createGroup', 'leave', 'send', 'addSchedule', 'updateSchedule', 'removeSchedule', 'sendScheduleNow']);
+const CORE_CALLS = new Set(['setName', 'setSettings', 'addQuick', 'removeQuick', 'reorderQuick', 'createInvite', 'cancelInvite', 'joinCode', 'createGroup', 'leave', 'send']);
 
 function fullState() {
   const snap = core.snapshot();

@@ -5,12 +5,11 @@
   const api = window.titli;
 
   let S = null;            // latest state from the main process
-  let view = null;         // welcome1 | welcome2 | main | settings | quick | sched
+  let view = null;         // welcome1 | welcome2 | main | settings | quick
   let tab = 'send';
   let toKey = null;        // who the Send tab sends to
   let pairStep = false;    // first run, step 2
   let menuFor = null, confirming = null;   // People row options
-  let sf = null;           // the schedule form: { id, circleId, repeat, confirmDelete }
   let flash = null;        // { key, until }: the quick note that was just sent
   let actSeenBefore = 0;   // newest received item when Activity was last opened
   let relayOpen = false;
@@ -28,7 +27,6 @@
     return s;
   }
   const timeStr = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const fmtHM = hm => { const [h, m] = String(hm).split(':').map(Number); const d = new Date(); d.setHours(h, m, 0, 0); return timeStr(d.getTime()); };
   const startOfDay = ms => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
   const daysFromToday = ms => Math.round((startOfDay(ms) - startOfDay(Date.now())) / 86400000);
   function dayLabel(ms) {
@@ -36,12 +34,6 @@
     if (n === 0) return 'Today';
     if (n === -1) return 'Yesterday';
     return new Date(ms).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' });
-  }
-  function whenLabel(ms) {
-    const n = daysFromToday(ms);
-    if (n === 0) return 'today';
-    if (n === 1) return 'tomorrow';
-    return new Date(ms).toLocaleDateString([], { weekday: 'long' });
   }
   const shortDate = ms => new Date(ms).toLocaleDateString([], { day: 'numeric', month: 'short' });
   // deep enough for white initials to read clearly
@@ -88,7 +80,7 @@
   const newestReceived = () => S.received.reduce((m, r) => Math.max(m, r.at || 0), 0);
 
   /* ---------- views and tabs ---------- */
-  const VIEWS = { welcome1: '#welcome1', welcome2: '#welcome2', main: '#main', settings: '#page-settings', quick: '#page-quick', sched: '#page-sched' };
+  const VIEWS = { welcome1: '#welcome1', welcome2: '#welcome2', main: '#main', settings: '#page-settings', quick: '#page-quick' };
   function hideToast() { clearTimeout(toastTimer); $('#toast').hidden = true; }
   function show(v) {
     if (v !== view) hideToast();
@@ -118,10 +110,8 @@
   function openPage(v) { show(v); render(); const s = $(VIEWS[v] + ' .scroll'); if (s) s.scrollTop = 0; }
   function goBack() {
     const from = view;
-    sf = null;
     show('main');
     if (from === 'quick') selectTab('send');
-    else if (from === 'sched') selectTab('schedule');
     render();
   }
   $$('[data-back]').forEach(b => b.addEventListener('click', goBack));
@@ -144,8 +134,7 @@
     if (pairStep) { show('welcome2'); renderWelcome2(); return; }
     if (!view || view === 'welcome1' || view === 'welcome2') view = 'main';
     show(view);
-    renderStatus(); renderUpdate(); renderSend(); renderActivity(); renderSchedule(); renderPeople(); renderSettings(); renderQuickEdit();
-    if (view === 'sched' && sf) renderSf();
+    renderStatus(); renderUpdate(); renderSend(); renderActivity(); renderPeople(); renderSettings(); renderQuickEdit();
     if (view === 'main' && tab === 'activity') writeSeen(newestReceived());
     renderTabDot();
   }
@@ -351,8 +340,7 @@
     const body = el('div', 'act-body');
     body.append(noteLine(m.text));
     const meta = el('span', 'act-meta');
-    if (m.scheduled) { const ic = icon('i-clock', 'clock'); meta.append(ic); }
-    meta.append(document.createTextNode(`To ${m.to} · ${timeStr(m.at)}${m.scheduled ? ' · scheduled' : ''} ·`));
+    meta.append(document.createTextNode(`To ${m.to} · ${timeStr(m.at)} ·`));
     const st = el('span', 'stat ' + m.status.cls);
     if (m.status.cls === 'seen') st.append(icon('i-check'));
     st.append(document.createTextNode(m.status.text));
@@ -377,117 +365,6 @@
     if (actSeenBefore && r.at > actSeenBefore) { const d = el('span', 'new-dot'); d.title = 'New'; li.append(d); }
     return li;
   }
-
-  /* Schedule */
-  const REP = { once: 'Once', daily: 'Every day', weekdays: 'Weekdays' };
-  function renderSchedule() {
-    const ul = $('#schedList');
-    ul.textContent = '';
-    const list = S.schedules.slice().sort((a, b) => a.time.localeCompare(b.time));
-    $('#schedHint').hidden = !list.length;
-    if (!list.length) ul.append(el('li', 'empty-note', 'Nothing scheduled yet. “Drink some water” every day at 11 is a nice start.'));
-    for (const s of list) {
-      const isNext = S.next && S.next.id === s.id;
-      const li = el('li', 'sch' + (isNext ? ' next' : '') + (s.on ? '' : ' off'));
-      const b = btn('sch-btn');
-      b.setAttribute('aria-label', `${fmtHM(s.time)}, ${s.text || 'a heart'}, ${REP[s.repeat]} to ${s.to}. Change it`);
-      const body = el('span', 'sch-body');
-      const note = el('span', 'sch-note');
-      if (s.text == null) note.append(icon('i-heart'), document.createTextNode('A heart')); else note.textContent = s.text;
-      body.append(note, el('span', 'sch-meta', `${REP[s.repeat]} · to ${s.to}${s.on ? '' : ' · Paused'}`));
-      if (isNext) body.append(el('span', 'next-tag', `Next · ${whenLabel(S.next.when)}`));
-      b.append(el('span', 'sch-time', fmtHM(s.time)), body);
-      b.addEventListener('click', () => openSchedForm(s));
-      const sw = el('label', 'switch');
-      const cb = el('input'); cb.type = 'checkbox'; cb.checked = s.on;
-      cb.setAttribute('aria-label', `${fmtHM(s.time)} ${s.text || 'heart'}, ${s.on ? 'on' : 'paused'}`);
-      cb.addEventListener('change', () => call('updateSchedule', s.id, { on: cb.checked }));
-      sw.append(cb, el('span', 'track'));
-      li.append(b, sw);
-      ul.append(li);
-    }
-  }
-
-  function nextHour() { const d = new Date(); d.setHours(d.getHours() + 1, 0, 0, 0); return `${String(d.getHours()).padStart(2, '0')}:00`; }
-
-  function openSchedForm(s) {
-    clearErr('#schedListErr');
-    const list = sendable();
-    if (!s && !list.length) { showErr('#schedListErr', 'Pair with someone first, then you can schedule butterflies to them.'); return; }
-    sf = s ? { id: s.id, circleId: s.circleId, repeat: s.repeat, confirmDelete: false }
-           : { id: null, circleId: toKey || list[0].id, repeat: 'daily', confirmDelete: false };
-    $('#schedTitle').textContent = s ? 'Edit scheduled butterfly' : 'New scheduled butterfly';
-    $('#sfSave').textContent = s ? 'Save changes' : 'Schedule it';
-    $('#sfEditBtns').hidden = !s;
-    $('#sfDelete').textContent = 'Delete';
-    const sel = $('#sfNote');
-    sel.textContent = '';
-    const opt = (v, label) => { const o = el('option', '', label); o.value = v; sel.append(o); };
-    opt('__heart', '♥  A heart');
-    S.quick.forEach(q => opt('q:' + q, q));
-    if (s && s.text != null && !S.quick.includes(s.text)) opt('q:' + s.text, s.text);
-    opt('__new', 'Write a new note…');
-    sel.value = s ? (s.text == null ? '__heart' : 'q:' + s.text) : (S.quick.includes('Drink some water') ? 'q:Drink some water' : (S.quick[0] ? 'q:' + S.quick[0] : '__heart'));
-    $('#sfCustom').value = '';
-    $('#sfCustom').hidden = true;
-    $('#sfTime').value = s ? s.time : nextHour();
-    clearErr('#sfErr');
-    openPage('sched');
-  }
-
-  function renderSf() {
-    let list = sendable();
-    const cur = S.circles.find(c => c.id === sf.circleId);
-    if (cur && !list.includes(cur)) list = [cur, ...list];
-    if (!cur && list[0]) sf.circleId = list[0].id;
-    renderToRow($('#sfTo'), list, sf.circleId, id => { sf.circleId = id; renderSf(); });
-    $$('#sfRepeat button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.r === sf.repeat)));
-    const c = S.circles.find(x => x.id === sf.circleId);
-    const t = $('#sfTime').value ? fmtHM($('#sfTime').value) : 'that time';
-    $('#sfHelp').textContent = !c ? '' : c.kind === 'group'
-      ? `Anyone in ${c.name} who’s on a call at ${t} gets it when they’re free.`
-      : `If ${c.name} is on a call at ${t}, it waits until they’re free.`;
-  }
-
-  $('#newSched').addEventListener('click', () => openSchedForm(null));
-  $('#sfNote').addEventListener('change', () => {
-    const custom = $('#sfNote').value === '__new';
-    $('#sfCustom').hidden = !custom;
-    if (custom) $('#sfCustom').focus();
-    clearErr('#sfErr');
-  });
-  $('#sfTime').addEventListener('input', () => { if (sf) renderSf(); });
-  $$('#sfRepeat button').forEach(b => b.addEventListener('click', () => { if (!sf) return; sf.repeat = b.dataset.r; renderSf(); }));
-  $('#sfSave').addEventListener('click', async () => {
-    if (!sf) return;
-    clearErr('#sfErr');
-    const v = $('#sfNote').value;
-    let text = null;
-    if (v === '__new') { text = $('#sfCustom').value.trim(); if (!text) return showErr('#sfErr', 'Write the note you want to schedule.'); }
-    else if (v.startsWith('q:')) text = v.slice(2);
-    const time = $('#sfTime').value;
-    if (!time) return showErr('#sfErr', 'Pick a time.');
-    const payload = { text, circleId: sf.circleId, time, repeat: sf.repeat };
-    const editing = !!sf.id;
-    const r = editing ? await call('updateSchedule', sf.id, payload) : await call('addSchedule', payload);
-    if (!r.ok) return showErr('#sfErr', r.error || 'That didn’t save. Please try again.');
-    goBack();
-    toast(editing ? 'Schedule saved' : `Scheduled for ${fmtHM(time)}`, REP[payload.repeat]);
-  });
-  $('#sfNow').addEventListener('click', async () => {
-    if (!sf || !sf.id) return;
-    const r = await call('sendScheduleNow', sf.id);
-    if (!r.ok) return showErr('#sfErr', r.error || 'That didn’t send.');
-    const c = S.circles.find(x => x.id === sf.circleId);
-    toast(`On its way to ${c ? c.name : 'them'}`);
-  });
-  $('#sfDelete').addEventListener('click', async () => {
-    if (!sf || !sf.id) return;
-    if (!sf.confirmDelete) { sf.confirmDelete = true; $('#sfDelete').textContent = 'Tap again to delete'; return; }
-    await call('removeSchedule', sf.id);
-    goBack();
-    toast('Schedule deleted');
-  });
 
   /* People */
   function renderPeople() {
@@ -725,7 +602,7 @@
   document.addEventListener('keydown', async e => {
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (view === 'settings' || view === 'quick' || view === 'sched') goBack(); else api.ui('hide');
+      if (view === 'settings' || view === 'quick') goBack(); else api.ui('hide');
       return;
     }
     if (!S || view !== 'main' || tab !== 'send') return;

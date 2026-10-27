@@ -10,7 +10,6 @@ const { seal, open } = require('../src/core/seal');
 const { Store } = require('../src/core/store');
 const { NtfyRelay } = require('../src/core/relay');
 const { TitliCore } = require('../src/core/titli');
-const schedule = require('../src/core/schedule');
 const presence = require('../src/core/presence');
 const { createMockNtfy } = require('./mock-ntfy');
 
@@ -55,24 +54,6 @@ test('seal: round trip, wrong key and tampering', () => {
   const bad = box.slice(0, -4) + (box.slice(-4) === 'AAAA' ? 'BBBB' : 'AAAA');
   assert.equal(open(k1, bad), null);
   assert.equal(open(k1, 'hello'), null);
-});
-
-test('schedule: due today, weekdays, catch-up window, once', () => {
-  const s = { id: 'a', time: '11:00', repeat: 'daily', on: true, last: '' };
-  const mon = new Date(2026, 9, 26, 11, 0, 20).getTime(); // Monday 11:00:20
-  assert.equal(schedule.due([s], mon, mon - 20000).length, 1);
-  assert.equal(schedule.due([{ ...s, last: schedule.dayKey(new Date(mon)) }], mon, mon - 20000).length, 0);
-  assert.equal(schedule.due([s], mon - 3600 * 1000, mon - 3600 * 1000 - 20000).length, 0); // 10:00, not yet
-  const sat = new Date(2026, 9, 24, 11, 0, 10).getTime();
-  assert.equal(schedule.due([{ ...s, repeat: 'weekdays' }], sat, sat - 20000).length, 0);
-  // laptop slept from 10:50 to 11:40: still fires
-  const wake = new Date(2026, 9, 26, 11, 40).getTime();
-  assert.equal(schedule.due([s], wake, new Date(2026, 9, 26, 10, 50).getTime()).length, 1);
-  // slept until 14:00: too late, skipped
-  const late = new Date(2026, 9, 26, 14, 0).getTime();
-  assert.equal(schedule.due([s], late, new Date(2026, 9, 26, 10, 50).getTime()).length, 0);
-  const n = schedule.nextRun([s], new Date(2026, 9, 26, 12, 0).getTime());
-  assert.equal(new Date(n.when).getDate(), 27);
 });
 
 test('presence: meetings, sharing, away and settings', () => {
@@ -194,45 +175,6 @@ test('offline: a note sent while the other laptop sleeps lands when it wakes', a
   anu.relay.start();                                  // and wakes up
   await until(() => anu.s.inbox.length === 1, 5000, 'delivered after wake');
   assert.equal(anu.s.inbox[0].text, 'Come home soon');
-});
-
-test('schedules fire through the core', async t => {
-  const ntfy = createMockNtfy();
-  const url = await ntfy.listen();
-  let clock = new Date(2026, 9, 26, 10, 59, 30).getTime();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-'));
-  const store = new Store(path.join(dir, 's.json')); store.load();
-  const core = new TitliCore({ store, relay: new NtfyRelay({ server: url }), now: () => clock });
-  core.setName('Rohit');
-  t.after(async () => { core.stop(); await ntfy.close(); });
-  core.start();
-  const g = core.createGroup('Us');
-  core.s.circles[0].members.x = { name: 'Anu' };
-  assert.ok(core.addSchedule({ text: 'Drink some water 💧', circleId: g.circleId, time: '11:00', repeat: 'once' }).ok);
-  assert.equal(core.addSchedule({ circleId: g.circleId, time: '25:00' }).ok, false);
-  core.s.lastScheduleCheck = clock;
-  assert.equal(core.checkSchedules().length, 0);
-  clock += 45000;
-  assert.equal(core.checkSchedules().length, 1);
-  assert.equal(core.s.schedules[0].on, false, 'once turns itself off');
-  assert.equal(core.s.sent[0].scheduled, true);
-  clock += 45000;
-  assert.equal(core.checkSchedules().length, 0);
-
-  // editing: switch it back on, move it later today, change the note and repeat
-  const id = core.s.schedules[0].id;
-  assert.ok(core.updateSchedule(id, { on: true, time: '11:05', text: 'Stretch', repeat: 'weekdays' }).ok);
-  assert.deepEqual([core.s.schedules[0].time, core.s.schedules[0].text, core.s.schedules[0].repeat], ['11:05', 'Stretch', 'weekdays']);
-  assert.equal(core.updateSchedule(id, { text: '   ' }).ok, false, 'empty note refused');
-  assert.equal(core.updateSchedule(id, { circleId: 'nope' }).ok, false);
-  assert.ok(core.updateSchedule(id, { text: null }).ok, 'a heart');
-  assert.equal(core.s.schedules[0].text, null);
-  clock = new Date(2026, 9, 26, 11, 5, 20).getTime();
-  assert.equal(core.checkSchedules().length, 1, 'fires at the new time');
-  // moving it to a time already past today waits for tomorrow
-  assert.ok(core.updateSchedule(id, { time: '09:00' }).ok);
-  clock += 60000;
-  assert.equal(core.checkSchedules().length, 0);
 });
 
 test('quick notes: reorder keeps the same notes', () => {

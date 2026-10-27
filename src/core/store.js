@@ -24,15 +24,13 @@ function defaults() {
     invites: [],     // pair invites you created that nobody has used yet
     joining: [],     // pair codes you entered, waiting for the other side to answer
     quick: DEFAULT_QUICK.slice(),
-    schedules: [],
     sent: [],        // what you sent, with who has seen it
     inbox: [],       // butterflies waiting to land on this laptop
     received: [],    // butterflies that have landed here (most recent first)
     outbox: [],      // relay posts that failed while offline
     handled: [],     // relay message ids already processed
     relayCaught: {}, // topic -> unix time we were last listening
-    lastTo: null,
-    lastScheduleCheck: 0
+    lastTo: null
   };
 }
 
@@ -49,9 +47,11 @@ class Store {
     const d = defaults();
     if (!data || typeof data !== 'object') { this.state = d; this.saveNow(); return this.state; }
     this.state = { ...d, ...data, me: { ...d.me, ...(data.me || {}) }, settings: { ...d.settings, ...(data.settings || {}) } };
-    for (const k of ['circles', 'invites', 'joining', 'quick', 'schedules', 'sent', 'inbox', 'received', 'outbox', 'handled']) {
+    for (const k of ['circles', 'invites', 'joining', 'quick', 'sent', 'inbox', 'received', 'outbox', 'handled']) {
       if (!Array.isArray(this.state[k])) this.state[k] = d[k];
     }
+    // scheduling was removed; drop what earlier versions saved for it
+    delete this.state.schedules; delete this.state.lastScheduleCheck;
     return this.state;
   }
 
