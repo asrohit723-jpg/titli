@@ -25,13 +25,18 @@ class Overlay extends EventEmitter {
     screen.on('display-removed', () => this._fit());
   }
 
-  // Mac: the whole screen, perching just under the menu bar.
+  // Mac: the whole screen; the butterfly keeps clear of the menu bar and the Dock (wherever it is).
   // Windows: the work area only (a topmost window the size of the whole screen makes Windows treat it
   // as a full-screen app), perching low enough to clear the title bar and close button of a maximised window.
   geometry() {
     const d = screen.getPrimaryDisplay();
-    if (process.platform === 'win32') return { bounds: d.workArea, menubar: 36 };
-    return { bounds: d.bounds, menubar: Math.max(0, d.workArea.y - d.bounds.y) };
+    if (process.platform === 'win32') return { bounds: d.workArea, menubar: 36, insets: { top: 36, bottom: 12, left: 0, right: 0 } };
+    const b = d.bounds, w = d.workArea;
+    const insets = {
+      top: Math.max(0, w.y - b.y), left: Math.max(0, w.x - b.x),
+      bottom: Math.max(0, (b.y + b.height) - (w.y + w.height)), right: Math.max(0, (b.x + b.width) - (w.x + w.width))
+    };
+    return { bounds: b, menubar: insets.top, insets };
   }
 
   ensure() {
@@ -56,10 +61,10 @@ class Overlay extends EventEmitter {
     this.ensure();
     await this.ready;
     this._fit();
-    const { menubar } = this.geometry();
+    const { menubar, insets } = this.geometry();
     this.win.showInactive();
     this.visible = true;
-    this.win.webContents.send('overlay:deliver', { item, menubar, ...extra });
+    this.win.webContents.send('overlay:deliver', { item, menubar, insets, ...extra });
   }
 
   abort() { if (this.win && this.visible) this.win.webContents.send('overlay:abort'); }
@@ -81,9 +86,9 @@ class Overlay extends EventEmitter {
 
   _fit() {
     if (!this.win || this.win.isDestroyed()) return;
-    const { bounds, menubar } = this.geometry();
+    const { bounds, menubar, insets } = this.geometry();
     this.win.setBounds(bounds);
-    this.win.webContents.send('overlay:geometry', { menubar });
+    this.win.webContents.send('overlay:geometry', { menubar, insets });
   }
 }
 

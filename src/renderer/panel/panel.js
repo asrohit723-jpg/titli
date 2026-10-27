@@ -541,6 +541,7 @@
     $('#setAway').checked = st.holdWhenAway;
     $('#setNotify').checked = st.notifyReactions;
     $('#setReceipts').checked = st.sendReceipts !== false;
+    $('#setAnywhere').checked = st.landAnywhere !== false;
     $('#dataNote').textContent = S.dataProtected ? 'Encrypted with a key your computer keeps' : 'In a file only your account can open';
     $('#setLogin').checked = st.openAtLogin;
     $('#setCapture').checked = st.allowCapture;
@@ -561,7 +562,7 @@
   $('#myName').addEventListener('change', saveName);
   $$('.wing').forEach(w => w.addEventListener('click', () => call('setSettings', { style: w.dataset.style })));
   const bindSwitch = (id, key) => $(id).addEventListener('change', e => call('setSettings', { [key]: e.target.checked }));
-  bindSwitch('#setMeetings', 'holdInMeetings'); bindSwitch('#setAway', 'holdWhenAway'); bindSwitch('#setNotify', 'notifyReactions'); bindSwitch('#setReceipts', 'sendReceipts');
+  bindSwitch('#setMeetings', 'holdInMeetings'); bindSwitch('#setAway', 'holdWhenAway'); bindSwitch('#setNotify', 'notifyReactions'); bindSwitch('#setReceipts', 'sendReceipts'); bindSwitch('#setAnywhere', 'landAnywhere');
   bindSwitch('#setLogin', 'openAtLogin'); bindSwitch('#setCapture', 'allowCapture');
   $('#relayToggle').addEventListener('click', () => { relayOpen = !relayOpen; renderSettings(); if (relayOpen) $('#relayUrl').focus(); });
   $('#saveRelay').addEventListener('click', async () => {

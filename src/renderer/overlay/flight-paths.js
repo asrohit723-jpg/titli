@@ -21,12 +21,14 @@
     playful: { name: 'playful', freq: 3.6, glide: [.5, 1.0],  flaps: [3, 5], speed: 1.14, weave: 1.5 },
   };
 
+  // what's kept clear at each edge of the screen: the menu bar, the Dock or taskbar
+  const insetsOf = ctx => Object.assign({ top: ctx.menubar != null ? ctx.menubar : 24, bottom: 0, left: 0, right: 0 }, ctx.insets || {});
+
   function tools(ctx) {
-    const { W, H, S, D } = ctx, rng = ctx.rng || Math.random;
+    const { W, H, S, D } = ctx, rng = ctx.rng || Math.random, I = insetsOf(ctx);
     const r = (a, b) => a + rng() * (b - a);
     const pick = list => list[Math.min(list.length - 1, Math.floor(rng() * list.length))];
-    const top = H / 2 - (ctx.menubar || 24) - S * 2.2;
-    const box = { x0: -W / 2 + S * 3, x1: W / 2 - S * 3, y0: -H / 2 + S * 3, y1: top };
+    const box = { x0: -W / 2 + I.left + S * 3, x1: W / 2 - I.right - S * 3, y0: -H / 2 + I.bottom + S * 3, y1: H / 2 - I.top - S * 2.2 };
     const zf = () => D * r(.02, .045);                       // usual cruising depth
     const p = (x, y, z) => ({ x, y, z: z == null ? zf() : z });
     const keepIn = q => ({ x: clamp(q.x, box.x0, box.x1), y: clamp(q.y, box.y0, box.y1), z: q.z });
@@ -289,16 +291,30 @@
     return { fig, approach, points: fig.pts.concat(APPROACHES[approach](t, at), [{ x: at.x, y: at.y, z: 0 }]) };
   }
 
+  /* ---------- perching anywhere ----------
+     Every route is designed for a perch in the top-right quarter of the screen. For a perch elsewhere the route
+     is planned for its mirror image there, then mirrored back: left-right for the left side, top-bottom for the
+     bottom. Mirroring keeps every turn exactly as smooth, and the on-screen checks still hold. */
+  function mirrorOf(ctx) {
+    const fx = ctx.at.x < 0 ? -1 : 1, fy = ctx.at.y < 0 ? -1 : 1, I = insetsOf(ctx);
+    const canonical = Object.assign({}, ctx, {
+      at: { x: ctx.at.x * fx, y: ctx.at.y * fy, z: ctx.at.z || 0 },
+      insets: { top: fy > 0 ? I.top : I.bottom, bottom: fy > 0 ? I.bottom : I.top, left: fx > 0 ? I.left : I.right, right: fx > 0 ? I.right : I.left }
+    });
+    return { canonical, map: pts => pts.map(q => ({ x: q.x * fx, y: q.y * fy, z: q.z })) };
+  }
+
   /* ---------- the planner ----------
-     ctx: { W, H, S, D, menubar, at: perch (entry) or start point (exit), makeCurve(points), recent: [names], rng } */
+     ctx: { W, H, S, D, insets {top, bottom, left, right} (or menubar), at: perch (entry) or start point (exit),
+            makeCurve(points), recent: [names], rng } */
   function plan(kind, ctx) {
-    const t = tools(ctx), at = ctx.at, entry = kind === 'entry';
+    const { canonical, map } = mirrorOf(ctx), t = tools(canonical), entry = kind === 'entry';
     const table = entry ? ENTRIES : EXITS, names = Object.keys(table);
     let pool = names.filter(n => !(ctx.recent || []).includes(n));
     if (!pool.length) pool = names;
     for (let attempt = 0; attempt < 40; attempt++) {
       const name = t.pick(attempt < 30 ? pool : names);
-      const { fig, points, approach } = build(kind, name, ctx, t);
+      const built = build(kind, name, canonical, t), fig = built.fig, approach = built.approach, points = map(built.points);
       const curve = ctx.makeCurve(points), info = inspect(curve, t, kind);
       if (!info.ok) continue;
       const mood = pickMood(t, fig.moods);
@@ -307,20 +323,20 @@
       const duration = clamp(info.length / speed, entry ? 6500 : 4500, entry ? 10000 : 8500);
       return { kind, name, approach, points, curve, mood, duration, info };
     }
-    return fallback(kind, ctx, t);
+    return fallback(kind, canonical, t, map);
   }
 
   // the original routes, exactly: always fine, used only if nothing else passes the checks
-  function fallback(kind, ctx, t) {
+  function fallback(kind, ctx, t, map = pts => pts) {
     const { W, H, S, D } = t, P = ctx.at, v = (x, y, z) => ({ x, y, z: z || 0 });
-    const points = kind === 'entry'
+    const points = map(kind === 'entry'
       ? [v(W * .6, P.y - H * .5, D * .03), v(W * .3, P.y - H * .6, D * .04), v(-W * .02, P.y - H * .52, D * .04), v(-W * .22, P.y - H * .34, D * .04), v(-W * .24, P.y - H * .12, D * .035),
         v(-W * .08, P.y + H * .02, D * .03), v(P.x - W * .3, P.y + H * .04, D * .022), v(P.x - W * .12, P.y + S * 2.4, D * .012), v(P.x - S * 1.2, P.y + S * .9, D * .004), v(P.x, P.y, 0)]
-      : [v(P.x, P.y, P.z), v(P.x - S * 2, P.y + S * 1.6, D * .008), v(P.x - W * .14, P.y + S * .4, D * .02), v(P.x - W * .3, P.y - H * .1, D * .03), v(P.x - W * .42, P.y + H * .1, D * .035), v(P.x - W * .34, H * .84, D * .04)];
+      : [v(P.x, P.y, P.z), v(P.x - S * 2, P.y + S * 1.6, D * .008), v(P.x - W * .14, P.y + S * .4, D * .02), v(P.x - W * .3, P.y - H * .1, D * .03), v(P.x - W * .42, P.y + H * .1, D * .035), v(P.x - W * .34, H * .84, D * .04)]);
     const curve = ctx.makeCurve(points);
     return { kind, name: kind === 'entry' ? 'sweep' : 'away', approach: kind === 'entry' ? 'level' : null, points, curve, mood: Object.assign({}, MOODS.easy),
       duration: kind === 'entry' ? 8400 : 7000, info: inspect(curve, t, kind), fallback: true };
   }
 
-  return { plan, build, inspect, tools, makeCurve, MOODS, ENTRIES: Object.keys(ENTRIES), EXITS: Object.keys(EXITS), APPROACHES: Object.keys(APPROACHES) };
+  return { plan, build, inspect, tools, makeCurve, mirrorOf, MOODS, ENTRIES: Object.keys(ENTRIES), EXITS: Object.keys(EXITS), APPROACHES: Object.keys(APPROACHES) };
 });

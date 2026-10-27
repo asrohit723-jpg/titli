@@ -65,3 +65,27 @@ test('flight: the same pattern still comes out different each time', () => {
   const moved = a.some((p, i) => b[i] && Math.hypot(p.x - b[i].x, p.y - b[i].y) > 10) || a.length !== b.length;
   assert.ok(moved, 'two loops are not identical');
 });
+
+test('flight: every landing spot (corners and the middle of each side) gets smooth routes that end on it', () => {
+  const spots = (W, H, I) => {
+    const side = S * 1.6 + 22, xR = W - I.right - side, xL = I.left + side;
+    const yT = I.top + S * 1.2 + 10, yB = H - I.bottom - (S * 1.6 + 18), yM = I.top + (H - I.top - I.bottom) * .42;
+    return { tr: [xR, yT], tl: [xL, yT], br: [xR, yB], bl: [xL, yB], rm: [xR, yM], lm: [xL, yM] };
+  };
+  const setups = [[1440, 900, { top: 24, bottom: 76, left: 0, right: 0 }], [1920, 1032, { top: 36, bottom: 12, left: 0, right: 0 }], [1280, 800, { top: 24, bottom: 0, left: 70, right: 0 }]];
+  let n = 0, fallbacks = 0;
+  for (const [W, H, I] of setups) {
+    const D = (H / 2) / Math.tan(THREE.MathUtils.degToRad(15));
+    for (const [name, [px, py]] of Object.entries(spots(W, H, I))) {
+      const at = { x: px - W / 2, y: H / 2 - py, z: 0 };
+      for (let seed = 1; seed <= 12; seed++) for (const kind of ['entry', 'exit']) {
+        const r = Flight.plan(kind, { W, H, S, D, insets: I, at, rng: seeded(seed * 31 + W + name.charCodeAt(0)), makeCurve: pts => Flight.makeCurve(THREE, D, pts) });
+        n++; if (r.fallback) fallbacks++;
+        const touch = kind === 'entry' ? r.curve.getPointAt(1) : r.curve.getPointAt(0);
+        assert.ok(Math.hypot(touch.x - at.x, touch.y - at.y) < 1e-6, `${kind} at ${name} touches the spot`);
+        if (!r.fallback) assert.ok(r.info.ok && r.info.tightMid >= S * 3, `${kind} at ${name} is smooth`);
+      }
+    }
+  }
+  assert.ok(fallbacks / n < .01, `the plain fallback is almost never needed (${fallbacks}/${n})`);
+});

@@ -12,6 +12,7 @@ and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 - **Quick notes**: save up to 12 short notes (60 characters max), reorder them, and send one with a click, a number key, or from the menu-bar icon's right-click menu.
 - **One-to-one or groups**: pair with one person, or make a group where everyone gets the butterfly.
 - **Never at a bad moment**: butterflies wait while you're on a call (camera or mic in use), something is full screen, the screen is locked, the laptop is asleep, or you've stepped away. They're also invisible to screen sharing and recordings.
+- **Lands somewhere new**: a corner or the middle of a side, never the same spot twice running, keeping clear of the menu bar, Dock and taskbar (or always top right, if you prefer).
 - **A different flight every time**: it arrives one of 8 ways (a wide sweep, a lazy loop, a figure eight, a dive, a fly-by from beside you...) and leaves one of 6, each re-shaped on every visit and flown in a calm, easy or playful mood. It never repeats its last few routes.
 - **Activity**: everything you sent and received in one timeline, with seen receipts and reactions.
 - **No accounts**: everything stays on your computer. Butterflies travel through a free relay ([ntfy](https://ntfy.sh)), encrypted on your laptop so the relay can't read them.

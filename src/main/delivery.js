@@ -39,7 +39,7 @@ class Delivery {
     const item = this.core.nextDelivery();
     if (!item) return;
     this.playing = { id: item.id, shown: false };
-    this.overlay.play(item).catch(e => { this.log('overlay failed: ' + e.message); this.playing = null; });
+    this.overlay.play(item, { anywhere: this.core.s.settings.landAnywhere !== false }).catch(e => { this.log('overlay failed: ' + e.message); this.playing = null; });
   }
 
   _onOverlay(ev) {

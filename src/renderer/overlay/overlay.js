@@ -14,7 +14,8 @@
   const lerpAngle = (a, b, t) => a + angDiff(b, a) * t;
   const wait = ms => new Promise(r => setTimeout(r, reduce ? 0 : ms));
   const BUTTERFLY_SIZE = 20; // half-wingspan in screen points
-  let MENUBAR = 24;
+  // what to keep clear at each edge of the window: the menu bar, the Dock or taskbar (main sends the real numbers)
+  let INSETS = { top: 24, bottom: 0, left: 0, right: 0 };
 
   /* ---------- renderer ---------- */
   let renderer;
@@ -354,17 +355,38 @@
     kick();
   }
 
-  /* ---------- where it perches ---------- */
+  /* ---------- where it perches ----------
+     Six spots, all at the edges where they cover the least: the four corners and halfway down each side.
+     It never lands in the same spot twice running (or always top right, if that's what you chose). */
   let state = 'idle';            // idle | flying | landing | waiting | reading | leaving
-  let perchMode = 'corner';      // corner (top right) | edge (bottom right, during a meeting)
-  function perchPx(mode) {
-    const mb = MENUBAR, side = S * 1.6 + 22;
-    if (mode === 'edge') return { x: W - side, y: H - S * 1.6 - W * .02 };
-    return { x: W - side, y: mb + S * 1.2 + 10 };
+  let spot = 'tr';
+  const SPOTS = ['tr', 'tl', 'br', 'bl', 'rm', 'lm'];
+  function perchPx(name) {
+    const I = INSETS, side = S * 1.6 + 22;
+    const x = name[0] === 'l' || name === 'tl' || name === 'bl' ? I.left + side : W - I.right - side;
+    const y = name[0] === 't' ? I.top + S * 1.2 + 10
+      : name[0] === 'b' ? H - I.bottom - (S * 1.6 + 18)
+      : I.top + (H - I.top - I.bottom) * .42;
+    return { x, y };
   }
   const pxToWorld = p => new THREE.Vector3(p.x - W / 2, H / 2 - p.y, 0);
   const worldToPx = v => ({ x: W / 2 + v.x, y: H / 2 - v.y });
-  const perchHeading = mode => mode === 'edge' ? .3 : .22;
+  // it settles facing up, turned a little toward the middle of the screen
+  const perchHeading = name => {
+    const left = name === 'tl' || name === 'bl' || name === 'lm';
+    const turn = name[0] === 't' ? .22 : name[0] === 'b' ? .35 : .5;
+    return left ? -turn : turn;
+  };
+  function pickSpot(anywhere) {
+    if (!anywhere) return 'tr';
+    let recent = [];
+    try { recent = JSON.parse(localStorage.getItem('titli.spots') || '[]'); } catch (_) { recent = []; }
+    if (!Array.isArray(recent)) recent = [];
+    const choices = SPOTS.filter(x => !recent.slice(-2).includes(x));
+    const pick = choices[Math.floor(Math.random() * choices.length)] || 'tr';
+    try { localStorage.setItem('titli.spots', JSON.stringify(recent.concat(pick).slice(-4))); } catch (_) { /* not kept */ }
+    return pick;
+  }
   function resize() {
     W = Math.max(1, window.innerWidth); H = Math.max(1, window.innerHeight);
     const pr = Math.min(2, window.devicePixelRatio || 1);
@@ -374,7 +396,7 @@
     // really small: about a 40px wingspan, like a charm hanging in the corner
     S = BUTTERFLY_SIZE; bfly.scale.setScalar(S);
     pMat.uniforms.uScale.value = D * pr;
-    if (state === 'waiting' || state === 'reading' || state === 'landing') { bfly.position.copy(pxToWorld(perchPx(perchMode))); placeOverlays(); }
+    if (state === 'waiting' || state === 'reading' || state === 'landing') { bfly.position.copy(pxToWorld(perchPx(spot))); placeOverlays(); }
     kick();
   }
 
@@ -512,7 +534,7 @@
     // now and then, a slow shuffle on the perch
     if ((state === 'reading' || state === 'waiting') && wing.mode === 'breathe' && nextShift && secs > nextShift && !reduce) {
       nextShift = secs + rand(14, 22);
-      const h0 = bfly.rotation.z, h1 = perchHeading(perchMode) + rand(-.12, .12);
+      const h0 = bfly.rotation.z, h1 = perchHeading(spot) + rand(-.12, .12);
       tween(2400, k => { bfly.rotation.z = lerp(h0, h1, k); });
       flutter(2.2, 1.0);
     }
@@ -583,7 +605,7 @@
   })();
   function route(kind, at) {
     const r = Flight.plan(kind, {
-      W, H, S, D, menubar: MENUBAR, at: { x: at.x, y: at.y, z: at.z || 0 },
+      W, H, S, D, insets: INSETS, at: { x: at.x, y: at.y, z: at.z || 0 },
       recent: flightLog.recent(kind, kind === 'entry' ? 3 : 2),   // never one of the last few
       makeCurve: pts => Flight.makeCurve(THREE, D, pts),
     });
@@ -606,13 +628,13 @@
 
   function placeNow(P, heading) { fly.active = false; bfly.position.copy(P); bfly.rotation.set(0, 0, heading); wing.mode = 'hold'; wing.a = 1.3; }
 
-  async function deliver(item) {
+  async function deliver(item, { anywhere = true } = {}) {
     if (current) return;
     const gen = ++flowGen, alive = () => gen === flowGen;
     current = item;
     applyStyle(item.style || 'rose');
-    state = 'flying'; perchMode = 'corner';
-    const P = pxToWorld(perchPx('corner')), H0 = perchHeading('corner');
+    state = 'flying'; spot = pickSpot(anywhere);
+    const P = pxToWorld(perchPx(spot)), H0 = perchHeading(spot);
     const way = reduce ? null : route('entry', P);
     bfly.visible = true; wing.a = .9; startFly(way && way.mood); glints = true; kick();
     if (reduce) placeNow(P, H0);
@@ -681,13 +703,18 @@
     requestAnimationFrame(() => bubble.classList.add('show'));
   }
   function hideBubble() { bubble.classList.remove('show'); setTimeout(() => { if (!bubble.classList.contains('show')) bubble.hidden = true; }, 420); }
+  // the note opens beside the butterfly toward the middle of the screen: under it, or above it near the bottom
   function placeOverlays() {
     if (bubble.hidden) return;
     const px = worldToPx(bfly.position);
-    const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
-    const left = clamp(px.x + S * 1.3 - bw, 10, W - bw - 10);
+    const bw = bubble.offsetWidth, bh = bubble.offsetHeight, I = INSETS;
+    const onRight = px.x > W / 2;
+    const left = clamp(onRight ? px.x + S * 1.3 - bw : px.x - S * 1.3, I.left + 10, W - I.right - bw - 10);
+    const below = px.y + S * 1.05 + 8 + bh <= H - I.bottom - 10;
+    const top = below ? px.y + S * 1.05 + 8 : px.y - S * 1.05 - 8 - bh;
+    bubble.classList.toggle('up', !below);
     bubble.style.left = left + 'px';
-    bubble.style.top = clamp(px.y + S * 1.05 + 8, 10, H - bh - 10) + 'px';
+    bubble.style.top = clamp(top, I.top + 4, H - I.bottom - bh - 4) + 'px';
     bubble.style.setProperty('--tail-x', clamp(px.x - left, 14, bw - 14) + 'px');
   }
   function floatEmoji(e) {
@@ -716,8 +743,14 @@
     setInteractive(over || (nearBfly && state === 'reading'));
   });
 
-  bridge.onGeometry(g => { if (g && typeof g.menubar === 'number') MENUBAR = g.menubar; resize(); });
-  bridge.onDeliver(d => { if (d && typeof d.menubar === 'number') MENUBAR = d.menubar; resize(); if (d && d.item) deliver(d.item); });
+  function takeInsets(g) {
+    if (!g) return;
+    const n = v => (typeof v === 'number' && v >= 0 && v < 400 ? v : 0);
+    if (g.insets && typeof g.insets === 'object') INSETS = { top: n(g.insets.top), bottom: n(g.insets.bottom), left: n(g.insets.left), right: n(g.insets.right) };
+    else if (typeof g.menubar === 'number') INSETS = { top: n(g.menubar), bottom: 0, left: 0, right: 0 };
+  }
+  bridge.onGeometry(g => { takeInsets(g); resize(); });
+  bridge.onDeliver(d => { takeInsets(d); resize(); if (d && d.item) deliver(d.item, { anywhere: d.anywhere !== false }); });
   bridge.onAbort(() => abort());
 
   window.addEventListener('resize', resize);

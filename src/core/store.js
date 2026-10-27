@@ -20,6 +20,7 @@ function defaults() {
       openAtLogin: true,
       allowCapture: false,  // let screen recordings see butterflies (for filming)
       sendReceipts: true,   // tell people when their note arrived and when you saw it
+      landAnywhere: true,   // the butterfly lands in a different spot each time (off: always top right)
       style: 'rose'
     },
     circles: [],     // people you're paired with, and groups
