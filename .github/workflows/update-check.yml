@@ -101,9 +101,7 @@ jobs:
           }
           build 0.1.1 adhoc
           step openssl version
-          step openssl req -x509 -newkey rsa:3072 -sha256 -days 30 -nodes -keyout k.pem -out c.pem -subj "/CN=Titli Self-Signed/O=Titli" \
-            -addext "basicConstraints=critical,CA:false" -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning"
-          step openssl pkcs12 -export -inkey k.pem -in c.pem -name "Titli Self-Signed" -out t.p12 -passout pass:throwaway -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+          step scripts/make-signing-cert.sh t.p12 throwaway 30
           step scripts/ci-import-cert.sh t.p12 throwaway
           export TITLI_SIGN_IDENTITY="$(grep TITLI_SIGN_IDENTITY "$GITHUB_ENV" | tail -1 | cut -d= -f2)"
           export TITLI_SIGN_KEYCHAIN="$(grep TITLI_SIGN_KEYCHAIN "$GITHUB_ENV" | tail -1 | cut -d= -f2)"
