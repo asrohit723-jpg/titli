@@ -9,6 +9,7 @@ const { Store } = require('../core/store');
 const { NtfyRelay } = require('../core/relay');
 const { TitliCore } = require('../core/titli');
 const Taps = require('../core/taps');
+const { dataLock } = require('./data-lock');
 const presence = require('../core/presence');
 const { PresenceWatcher, helperPath } = require('./presence-watch');
 const { panelBounds } = require('./position');
@@ -38,23 +39,9 @@ const log = (...a) => { if (DEV || TEST_UPDATE) console.log('[titli]', ...a); };
 app.on('second-instance', () => showPanel());
 app.on('window-all-closed', e => e.preventDefault()); // a menu-bar app keeps running
 
-// Saved data (your keys, people and notes):
-//   Windows: encrypted with a key Windows keeps for your account (DPAPI). It never asks for anything.
-//   Mac: a file only your account can open. The Keychain would ask for your Mac password after updates (without
-//     a paid Apple developer ID, macOS ties Keychain access to each exact build), and a frozen app waiting on a
-//     password prompt is worse. Data that 0.1.45-0.1.51 encrypted is read once (the Keychain may ask one last
-//     time) and saved back as a plain file, so the Keychain is never needed again.
-function dataLock() {
-  if (!app.isPackaged || process.env.TITLI_SMOKE || !(MAC || WIN)) return { crypt: null, encrypt: false };
-  const crypt = { name: 'safeStorage', encrypt: s => safeStorage.encryptString(s), decrypt: b => safeStorage.decryptString(b) };
-  let encrypt = false;
-  if (WIN) { try { encrypt = safeStorage.isEncryptionAvailable(); } catch (e) { encrypt = false; } }
-  return { crypt, encrypt };
-}
-
 app.whenReady().then(() => {
   if (process.env.TITLI_TEST_DATA) console.log('[titli] data check: opening saved data');
-  store = new Store(path.join(app.getPath('userData'), 'titli.json'), dataLock());
+  store = new Store(path.join(app.getPath('userData'), 'titli.json'), dataLock({ platform: process.platform, packaged: app.isPackaged, smoke: !!process.env.TITLI_SMOKE, safeStorage }));
   store.load();
   const relay = new NtfyRelay({ server: store.state.settings.relay });
   relay.on('warn', e => log('relay:', e.message));
@@ -96,7 +83,7 @@ app.whenReady().then(() => {
     setTimeout(() => app.exit(0), 300);
     return;
   }
-  if (store.unlockFailed) setTimeout(() => notify('Titli started fresh', 'It couldn’t unlock what it had saved on this computer. Pair again with your people.'), 1500);
+  if (store.unlockFailed) setTimeout(() => notify('Titli started fresh', 'Pair again with your people to keep sending butterflies.'), 1500);
   if (!store.state.me.name && !TEST_UPDATE) setTimeout(showPanel, 600); // first run: say hello
   if (TEST_UPDATE) updater.check({ manual: true }).then(() => { log('test update: status', updater.state.status, updater.state.latest); return updater.update(); }).then(r => log('test update: result', JSON.stringify(r), updater.state.errorDetail || ''));
   if (process.env.TITLI_SMOKE) global.__titli = { panel, overlay, core, delivery, watcher, updater, showPanel, preview, store };

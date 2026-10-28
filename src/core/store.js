@@ -40,8 +40,8 @@ function defaults() {
   };
 }
 
-// crypt (optional): { name, encrypt(string) -> Buffer, decrypt(Buffer) -> string }, e.g. Electron's safeStorage,
-// which keeps its key in the macOS Keychain or with Windows (DPAPI). Then the file holds only ciphertext.
+// crypt (optional): { name, encrypt(string) -> Buffer, decrypt(Buffer) -> string }, e.g. Electron's safeStorage on
+// Windows (DPAPI). Then the file holds only ciphertext. Without crypt, an encrypted file is set aside, never unlocked.
 class Store {
   // encrypt: true = write encrypted; false = write a plain file (an encrypted one is read with crypt, then saved
   // plain); left out = follow the file (an encrypted file stays encrypted)
@@ -68,7 +68,7 @@ class Store {
       if (this.mode === undefined) this.encrypt = true; else this.migrated = !this.encrypt;
       return plain;
     } catch (e) {
-      // the system won't give us the key (a new computer, a reset keychain): keep the file aside, start fresh
+      // no key here (a Mac never asks the Keychain; a new Windows computer): keep the file aside, start fresh
       this.unlockFailed = true;
       try { fs.renameSync(this.file, this.file.replace(/\.json$/, '') + `.locked-${Date.now()}.json`); } catch (err) { /* best effort */ }
       return null;

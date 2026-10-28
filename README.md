@@ -18,7 +18,7 @@ and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 - **A different flight every time**: it arrives one of 8 ways (a wide sweep, a lazy loop, a figure eight, a dive, a fly-by from beside you...) and leaves one of 6, each re-shaped on every visit and flown in a calm, easy or playful mood. It never repeats its last few routes.
 - **Activity**: everything you sent and received in one timeline, with seen receipts and reactions.
 - **No accounts**: everything stays on your computer. Butterflies travel through a free relay ([ntfy](https://ntfy.sh)), encrypted on your laptop so the relay can't read them.
-- **Private by design**: pairing uses a key exchange, so an invite code someone else sees is useless; every message is signed, so nobody can send as you; group keys change when someone leaves; and your saved data stays in a file only your account can open (encrypted on Windows). See [Security](#security).
+- **Private by design**: pairing uses a key exchange, so an invite code someone else sees is useless; every message is signed, so nobody can send as you; group keys change when someone leaves; and your saved data stays in a file only your account can open (encrypted on Windows; on a Mac, Titli never asks for your password or the Keychain). See [Security](#security).
 
 ## Run it on your Mac (from source)
 

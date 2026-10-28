@@ -357,7 +357,7 @@ test('people paired before gestures keep their hearts, and untouched old default
   assert.deepEqual(ownAgain.state.quick, ['Miss you already', 'Lunch?']);
 });
 
-test('store: a Mac reads data an earlier version encrypted, then keeps it as a plain file and never needs the key again', () => {
+test('store: with the key at hand, an encrypted file is read once and kept as a plain file after that', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-'));
   const f = path.join(dir, 'titli.json');
   let calls = 0;
@@ -371,4 +371,29 @@ test('store: a Mac reads data an earlier version encrypted, then keeps it as a p
   const next = new Store(f, { crypt, encrypt: false }); next.load();
   assert.equal(next.state.me.name, 'Rohit');
   assert.equal(calls, 1, 'the key is not needed again');
+});
+
+test('a Mac never asks the Keychain: safeStorage is never touched, and an old encrypted file is set aside', () => {
+  const { dataLock } = require('../src/main/data-lock');
+  const touched = [];
+  const spy = new Proxy({}, { get: (_t, k) => { touched.push(k); return () => { throw new Error('the Keychain was asked'); }; } });
+  for (const platform of ['darwin', 'linux']) {
+    const lock = dataLock({ platform, packaged: true, smoke: false, safeStorage: spy });
+    assert.deepEqual(lock, { crypt: null, encrypt: false }, platform);
+  }
+  assert.deepEqual(touched, [], 'safeStorage is not even looked at');
+  // a file 0.1.45 to 0.1.52 encrypted on a Mac
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-'));
+  const f = path.join(dir, 'titli.json');
+  fs.writeFileSync(f, JSON.stringify({ titliEncrypted: 1, by: 'safeStorage', data: Buffer.from('v10secret').toString('base64') }));
+  const mac = new Store(f, dataLock({ platform: 'darwin', packaged: true, smoke: false, safeStorage: spy })); mac.load();
+  assert.equal(mac.unlockFailed, true);
+  assert.equal(mac.state.me.name, '', 'starts fresh');
+  assert.ok(!/titliEncrypted/.test(fs.readFileSync(f, 'utf8')), 'and saves a plain file');
+  assert.ok(fs.readdirSync(dir).some(n => /^titli\.locked-\d+\.json$/.test(n)), 'the old file is kept aside, not deleted');
+  assert.deepEqual(touched, []);
+  // Windows still encrypts, with its own account key (no prompt there)
+  let asked = 0;
+  const win = dataLock({ platform: 'win32', packaged: true, smoke: false, safeStorage: { isEncryptionAvailable: () => { asked++; return true; }, encryptString: s => Buffer.from(s), decryptString: b => b.toString() } });
+  assert.equal(win.encrypt, true); assert.equal(asked, 1);
 });
