@@ -53,6 +53,10 @@ class Overlay extends EventEmitter {
     this.win.setContentProtection(this.protect);     // invisible to screen sharing and recordings
     this.win.setIgnoreMouseEvents(true, { forward: true });
     this.ready = new Promise(res => this.win.webContents.once('did-finish-load', res));
+    // the overlay only ever shows its own page: no links, no dropped files, no new windows
+    this.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    this.win.webContents.on('will-navigate', e => e.preventDefault());
+    this.win.webContents.on('will-redirect', e => e.preventDefault());
     this.win.loadFile(path.join(__dirname, '../renderer/overlay/index.html'));
     this.win.on('closed', () => { this.win = null; this.visible = false; });
   }

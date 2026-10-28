@@ -325,3 +325,73 @@ test('an old group switches to the new protection once everyone has updated', as
   await sleep(300);
   assert.equal(latecomer.s.inbox.length, 0);
 });
+
+test('ids that look like built-in names can’t sneak a removed member back in or break reactions', async t => {
+  const ntfy = createMockNtfy(), url = await ntfy.listen();
+  const rohit = makeCore(url, 'Rohit'), amma = makeCore(url, 'Amma'), ex = makeCore(url, 'Ex');
+  t.after(async () => { for (const x of [rohit, amma, ex]) x.stop(); await ntfy.close(); });
+  await group(rohit, amma, ex);
+  const before = { ...ex.s.circles[0] };
+  assert.ok(rohit.removeMember(rohit.s.circles[0].id, ex.me.id).ok);
+  await until(() => amma.s.circles[0].epoch === 1, 5000, 'new key');
+  const fake = identity.newIdentity();
+  for (const from of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    await inject(url, before, { t: 'hello', from, name: 'Ex', pub: fake.sign.pub, xpub: fake.box.pub }, fake);
+  }
+  // and on the current key: a reaction "from" __proto__
+  rohit.send({ circleId: rohit.s.circles[0].id, text: 'hi' });
+  await until(() => amma.s.inbox.length === 1, 4000, 'note');
+  await inject(url, rohit.s.circles[0], { t: 'react', id: rohit.s.sent[0].id, r: '❤️', from: '__proto__', name: 'x', pub: fake.sign.pub }, fake);
+  await sleep(600);
+  for (const k of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) assert.equal(Object.prototype.hasOwnProperty.call(rohit.s.circles[0].members, k), false, `${k} is not a member`);
+  assert.equal(Object.getPrototypeOf(rohit.s.circles[0].members), Object.prototype);
+  assert.equal(({}).react, undefined, 'nothing leaks onto every object');
+  assert.equal(Object.keys(rohit.s.circles[0].members).length, 2);
+});
+
+test('only the group’s owner can invite, and a key swapped for someone shows up in the safety code', async t => {
+  const ntfy = createMockNtfy(), url = await ntfy.listen();
+  const rohit = makeCore(url, 'Rohit'), amma = makeCore(url, 'Amma'), appa = makeCore(url, 'Appa');
+  t.after(async () => { for (const x of [rohit, amma, appa]) x.stop(); await ntfy.close(); });
+  await group(rohit, amma, appa);
+  const r = amma.createGroupInvite(amma.s.circles[0].id);
+  assert.equal(r.ok, false, 'a member who isn’t the owner can’t make a code');
+  assert.match(r.error, /Only Rohit/);
+  assert.equal(amma.snapshot().circles[0].ownerName, 'Rohit');
+  await until(() => {
+    const codes = [rohit, amma, appa].map(x => x.snapshot().circles[0].safety);
+    return codes[0] === codes[1] && codes[1] === codes[2];
+  }, 5000, 'everyone sees the same five');
+  // Appa was handed a fake key for Amma: his five emoji no longer match
+  const before = appa.snapshot().circles[0].safety;
+  appa.s.circles[0].members[amma.me.id] = { ...appa.s.circles[0].members[amma.me.id], pub: identity.newIdentity().sign.pub };
+  assert.notEqual(appa.snapshot().circles[0].safety, before);
+  assert.notEqual(appa.snapshot().circles[0].safety, rohit.snapshot().circles[0].safety);
+});
+
+test('a late or replayed upgrade ask doesn’t move a healthy pair off its key', async t => {
+  const { TitliCore: V1 } = require('./fixtures/v1/titli');
+  const ntfy = createMockNtfy(), url = await ntfy.listen();
+  const old = makeCore(url, 'Priya', { Core: V1 });
+  const rohit = makeCore(url, 'Rohit');
+  t.after(async () => { rohit.stop(); old.stop(); await ntfy.close(); });
+  const inv = old.createInvite(); await sleep(300); rohit.joinCode(inv.code);
+  await until(() => rohit.s.circles.length === 1 && old.s.circles.length === 1, 6000, 'paired on 0.1.32');
+  const store = old.store; old.stop();
+  const priya = makeCore(url, 'Priya', { store });
+  t.after(() => priya.stop());
+  await until(() => priya.s.circles[0].v === 2 && rohit.s.circles[0].v === 2 && priya.s.circles[0].topic === rohit.s.circles[0].topic, 6000, 'both upgraded');
+  const keyNow = rohit.s.circles[0].topic;
+  // as if an older Titli had switched it: nothing on record about the switch being confirmed
+  delete rohit.s.circles[0].upConfirmed; rohit.s.circles[0].upDone = {}; rohit.s.circles[0].repairedAt = 0;
+  // an old ask from Priya shows up again on the old channel
+  const oldEntry = rohit.s.circles[0].old[0];
+  await inject(url, { topic: oldEntry.topic, secret: oldEntry.secret }, { t: 'upgrade', from: priya.me.id, name: 'Priya', pub: priya.me.keys.sign.pub, xpub: priya.me.keys.box.pub, eph: identity.ephemeral().pub }, priya.me.keys);
+  await until(() => !!rohit.s.circles[0].pending, 4000, 'he offers a fresh key, without switching');
+  await sleep(600);
+  assert.equal(rohit.s.circles[0].topic, keyNow, 'still on the same key');
+  priya.send({ circleId: priya.s.circles[0].id, text: 'still here' });
+  await until(() => rohit.s.inbox.some(x => x.text === 'still here'), 4000, 'notes still arrive');
+  rohit.send({ circleId: rohit.s.circles[0].id, text: 'me too' });
+  await until(() => priya.s.inbox.some(x => x.text === 'me too'), 4000, 'both ways');
+});

@@ -94,7 +94,8 @@ class Store {
 
   save() {
     clearTimeout(this._timer);
-    this._timer = setTimeout(() => this.saveNow(), 250);
+    // a busy disk or an antivirus holding the file: try again shortly rather than crash
+    this._timer = setTimeout(() => { try { this.saveNow(); } catch (e) { this.saveError = e; this._timer = setTimeout(() => this.save(), 2000); } }, 250);
   }
 
   saveNow() {

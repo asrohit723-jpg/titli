@@ -123,10 +123,10 @@ test('a pair whose upgrade only one side finished (her clock was fast) repairs i
   await new Promise(r => setTimeout(r, 800));
   assert.equal(rohit.s.inbox.length, 0, 'what she sends never reaches him');
 
-  // both update to this version; 13 hours have passed since her switch
+  // both update to this version
   rohit.stop(); priya.stop();
   rohit = core(TitliCore, url, rohitFile);
-  priya = core(TitliCore, url, priyaFile, null, FAST + 13 * HOUR);
+  priya = core(TitliCore, url, priyaFile, null, FAST);
   await until(() => rohit.s.circles[0].v === 2 && rohit.s.circles[0].topic === priya.s.circles[0].topic, 8000, 'both on the same new key');
   priya.send({ circleId: priya.s.circles[0].id, text: 'found you' });
   await until(() => rohit.s.inbox.some(x => x.text === 'found you'), 5000, 'her notes reach him again');

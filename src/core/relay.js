@@ -114,6 +114,7 @@ class NtfyRelay extends EventEmitter {
           if (done) break;
           kick();
           buf += dec.decode(value, { stream: true });
+          if (buf.length > 256 * 1024 && buf.indexOf('\n') < 0) throw new Error('Relay sent a line that never ends');
           let i;
           while ((i = buf.indexOf('\n')) >= 0) {
             const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
@@ -155,7 +156,11 @@ class NtfyRelay extends EventEmitter {
   // how far this computer's clock is from the relay's (ms; positive = ahead). Small differences don't count:
   // the relay only gives whole seconds, and the trip takes a moment.
   _clock(serverSec) {
-    const off = this.now() - serverSec * 1000;
+    // the relay's own time, as is: only used to ask it for messages "since" a time it understands
+    this._relayOffset = this.now() - serverSec * 1000;
+    // for trusting what people send, never more than 15 hours either way (a wrong time zone): a relay can't move
+    // our sense of time further than that
+    const off = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, this._relayOffset));
     const next = Math.abs(off) < 2 * 60 * 1000 ? 0 : Math.round(off / 1000) * 1000;
     if (Math.abs(next - this.clockOffset) >= 60 * 1000 || (next === 0) !== (this.clockOffset === 0)) {
       this.clockOffset = next;
@@ -163,7 +168,7 @@ class NtfyRelay extends EventEmitter {
     }
   }
 
-  _serverNowSec() { return Math.floor((this.now() - this.clockOffset) / 1000); }
+  _serverNowSec() { return Math.floor((this.now() - (this._relayOffset || 0)) / 1000); }
 
   _pause(ms) {
     return new Promise(res => {
@@ -174,5 +179,6 @@ class NtfyRelay extends EventEmitter {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const MAX_OFFSET = 15 * 3600 * 1000;
 
 module.exports = { NtfyRelay };

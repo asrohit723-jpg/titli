@@ -160,6 +160,7 @@ function createPanel() {
   panel.on('focus', () => stopPicking());
   panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   panel.webContents.on('will-navigate', e => e.preventDefault());
+  panel.webContents.on('will-redirect', e => e.preventDefault());
 }
 
 function positionPanel() {
@@ -283,7 +284,10 @@ function notifySent(r) {
 
 function wireNotifications() {
   core.on('reaction', ({ fromName, r, text, g }) => {
-    if (store.state.settings.notifyReactions) notify(`${fromName} reacted ${r}`, text ? `to “${text}”` : `to your ${Taps.word(g) || g}`);
+    if (!store.state.settings.notifyReactions) return;
+    // on a call or sharing the screen, the notification doesn't repeat what you wrote
+    const busy = delivery && delivery.status().busy;
+    notify(`${fromName} reacted ${r}`, text ? (busy ? 'to your note' : `to “${text}”`) : `to your ${Taps.word(g) || g}`);
   });
   core.on('paired', ({ name }) => notify('Paired', `You and ${name} can send each other butterflies now.`));
   core.on('joined', ({ name, group }) => notify(group, `${name} joined the group.`));

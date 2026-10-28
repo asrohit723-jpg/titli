@@ -558,7 +558,7 @@
     head.append(el('span', 'safety-lbl', 'Safety code'), el('span', 'safety-code', c.safety));
     safe.append(head, el('span', 'hint', !c.secure
       ? (isGroup ? 'Full protection starts once everyone in it has updated Titli.' : `Full protection starts once ${c.name} updates Titli.`)
-      : (isGroup ? 'Everyone in the group sees these same five.' : `Ask ${c.name} what theirs shows. The same five means no one is listening in.`)));
+      : (isGroup ? 'Everyone in the group sees these same five. They change when someone joins or leaves.' : `Ask ${c.name} what theirs shows. The same five means no one is listening in.`)));
     box.append(safe);
 
     if (isGroup) {
@@ -566,6 +566,8 @@
         const cp = btn('btn outline'); cp.append(icon('i-copy'), document.createTextNode('Copy invite code'));
         cp.addEventListener('click', () => copyCode(c.code, 'Invite code'));
         box.append(cp);
+      } else if (!c.owner && !c.legacyCode) {
+        box.append(el('span', 'hint full', `${c.ownerName || 'The person who made this group'} can invite more people.`));
       } else {
         const mk = btn('btn outline', 'Make an invite code');
         mk.addEventListener('click', async () => {
