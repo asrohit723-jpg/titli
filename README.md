@@ -12,7 +12,7 @@ and back. On a Mac it lives in the menu bar; on Windows, by the clock.
 - **Quick notes**: save up to 12 short notes for everyone, plus up to 8 just for each person or group (they show first when you send to them). Reorder them, and send one with a click, a number key, or from the menu-bar icon's right-click menu.
 - **One-to-one or groups**: pair with one person, or make a group where everyone gets the butterfly.
 - **One tap, your way**: for each person or group, pick what one tap sends: a heart, a wave, a kiss, or any emoji you like.
-- **Seven butterflies**: Blush Rose, Blush Peony, Gold Leaf, Midnight, Sky Morpho, Spring Leaf and Monarch. The app itself keeps one warm coral, whichever you pick.
+- **Seven butterflies**: Blush Rose, Blush Peony, Gold Leaf, Midnight, Sky Morpho, Spring Leaf and Monarch. The app itself keeps one warm rose whichever you pick, and the little butterfly by the Titli title wears the one you chose.
 - **Never at a bad moment**: butterflies wait while you're on a call (camera or mic in use), something is full screen, the screen is locked, the laptop is asleep, or you've stepped away. They're also invisible to screen sharing and recordings.
 - **Lands somewhere new**: a corner or the middle of a side, never the same spot twice running, keeping clear of the menu bar, Dock and taskbar (or always top right, if you prefer).
 - **A different flight every time**: it arrives one of 8 ways (a wide sweep, a lazy loop, a figure eight, a dive, a fly-by from beside you...) and leaves one of 6, each re-shaped on every visit and flown in a calm, easy or playful mood. It never repeats its last few routes.

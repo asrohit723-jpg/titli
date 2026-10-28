@@ -2,7 +2,7 @@ html,body{width:100%; height:100%; overflow:hidden; background:transparent; font
 .gl{position:fixed; inset:0; width:100%; height:100%; display:block; pointer-events:none}
 .gl-fail{position:fixed; right:16px; top:40px; background:var(--glass); color:var(--glass-ink); border:1px solid var(--glass-line); border-radius:12px; padding:10px 12px; font-size:13px}
 
-.bubble{position:fixed; left:0; top:0; width:156px; background:var(--glass); color:var(--glass-ink); border:1px solid var(--glass-line); border-radius:12px; padding:6px 6px 7px 9px; box-shadow:0 10px 26px -12px rgba(40,20,15,.4), 0 1px 3px rgba(40,20,15,.07); transform-origin:var(--tail-x, 88%) 0; opacity:0; transform:translateY(-3px) scale(.92); transition:opacity .4s ease, transform .6s cubic-bezier(.2,1.25,.35,1)}
+.bubble{position:fixed; left:0; top:0; width:156px; background:var(--glass); color:var(--glass-ink); border:1px solid var(--glass-line); border-radius:12px; padding:6px 6px 7px 9px; box-shadow:0 10px 26px -12px rgba(40,22,26,.4), 0 1px 3px rgba(40,22,26,.07); transform-origin:var(--tail-x, 88%) 0; opacity:0; transform:translateY(-3px) scale(.92); transition:opacity .4s ease, transform .6s cubic-bezier(.2,1.25,.35,1)}
 .bubble.show{opacity:1; transform:none}
 /* near the bottom of the screen the note opens above the butterfly, its tail pointing down */
 .bubble.up{transform-origin:var(--tail-x, 88%) 100%; transform:translateY(3px) scale(.92)}

@@ -3,18 +3,18 @@
 @font-face { font-family: "Figtree"; font-style: normal; font-weight: 300 900; font-display: swap; src: url("../fonts/figtree-latin-wght-normal.woff2") format("woff2"); }
 
 :root{
-  /* one warm coral for everyone: friends, family and the people you love; it never changes with the butterfly */
+  /* one warm rose for everyone: friends, family and the people you love; it never changes with the butterfly */
   /* panel — light */
-  --bg:#FFFFFF; --surface:#F6F3F1; --surface-2:#EAE4E0; --tab-on:#FFFFFF; --chip:#EAE4E0; --tint:#FBEAE5;
-  --line:rgba(35,25,20,.07); --line-2:rgba(35,25,20,.12);
-  --ink:#1E1916; --mist:#6B625D; --dim:#6B625D;
-  --accent:#BF4D3B; --on-accent:#FFFFFF; --kbd-on-accent:rgba(255,255,255,.2); --kbd-on-accent-ink:#FFFFFF; --link:#AE4333;
-  --ok:#2F8F5B; --warn:#A8620E; --track-off:#D9D1CC; --knob-off:#FFFFFF; --group-ink:#6B625D;
-  --toast-bg:#1E1916; --toast-ink:#FFFFFF; --toast-muted:#B8ADA7;
-  --shadow:rgba(40,25,20,.22); --tab-shadow:0 1px 3px rgba(30,23,20,.16); --accent-glow:rgba(191,77,59,.8);
+  --bg:#FFFFFF; --surface:#F6F2F2; --surface-2:#EAE3E3; --tab-on:#FFFFFF; --chip:#EAE3E3; --tint:#FBEAEB;
+  --line:rgba(35,22,24,.07); --line-2:rgba(35,22,24,.12);
+  --ink:#1E1718; --mist:#6B6163; --dim:#6B6163;
+  --accent:#B54C58; --on-accent:#FFFFFF; --kbd-on-accent:rgba(255,255,255,.2); --kbd-on-accent-ink:#FFFFFF; --link:#A64551;
+  --ok:#2F8F5B; --warn:#A8620E; --track-off:#D9D0D0; --knob-off:#FFFFFF; --group-ink:#6B6163;
+  --toast-bg:#1E1718; --toast-ink:#FFFFFF; --toast-muted:#B8ACAE;
+  --shadow:rgba(40,22,26,.22); --tab-shadow:0 1px 3px rgba(30,22,24,.16); --accent-glow:rgba(181,76,88,.8);
   /* the butterfly's note */
-  --glass:#FFFFFF; --glass-line:rgba(50,30,25,.08); --glass-ink:#221C19; --glass-muted:#7B726D; --glass-btn:rgba(40,25,20,.07);
-  /* the brand mark is printed paper: the same in both themes */
+  --glass:#FFFFFF; --glass-line:rgba(50,28,32,.08); --glass-ink:#221B1C; --glass-muted:#7B7173; --glass-btn:rgba(40,22,26,.07);
+  /* the butterfly mark: the panel's header shows the one you picked (set from Settings → Your butterfly) */
   --mark-fill:#FFEDEA; --mark-ink:#8A3A58; --mark-rose:#E8718F;
   --font-display:"Fraunces","Iowan Old Style","Palatino Linotype",Georgia,serif;
   --font-body:"Figtree",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -22,14 +22,14 @@
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#141211; --surface:#1F1C1A; --surface-2:#2B2725; --tab-on:#34302D; --chip:#34302D; --tint:#36231E;
+    --bg:#141112; --surface:#1F1B1C; --surface-2:#2B2526; --tab-on:#342E2F; --chip:#342E2F; --tint:#36232A;
     --line:rgba(255,255,255,.06); --line-2:rgba(255,255,255,.11);
-    --ink:#F5EFEC; --mist:#B8ADA7; --dim:#988E88;
-    --accent:#F7A08A; --on-accent:#3A140C; --kbd-on-accent:rgba(58,20,12,.1); --kbd-on-accent-ink:#6E2C1E; --link:#F7A08A;
-    --ok:#6FD39C; --warn:#F2B35E; --track-off:#3A3431; --knob-off:#D9D0CB; --group-ink:#D8CCC6;
-    --toast-bg:#F5EFEC; --toast-ink:#141211; --toast-muted:#6B625D;
-    --shadow:rgba(0,0,0,.65); --tab-shadow:0 1px 2px rgba(0,0,0,.45); --accent-glow:rgba(247,160,138,.7);
-    --glass:#26211F; --glass-line:rgba(255,255,255,.1); --glass-ink:#F5EFEC; --glass-muted:#B8ADA7; --glass-btn:rgba(255,255,255,.1);
+    --ink:#F5EEEF; --mist:#B8ACAE; --dim:#988D8F;
+    --accent:#F4A3A8; --on-accent:#3A1218; --kbd-on-accent:rgba(58,18,24,.1); --kbd-on-accent-ink:#6E2A33; --link:#F4A3A8;
+    --ok:#6FD39C; --warn:#F2B35E; --track-off:#3A3233; --knob-off:#D9CFD0; --group-ink:#D8CBCD;
+    --toast-bg:#F5EEEF; --toast-ink:#141112; --toast-muted:#6B6163;
+    --shadow:rgba(0,0,0,.65); --tab-shadow:0 1px 2px rgba(0,0,0,.45); --accent-glow:rgba(244,163,168,.7);
+    --glass:#262022; --glass-line:rgba(255,255,255,.1); --glass-ink:#F5EEEF; --glass-muted:#B8ACAE; --glass-btn:rgba(255,255,255,.1);
     color-scheme:dark;
   }
 }

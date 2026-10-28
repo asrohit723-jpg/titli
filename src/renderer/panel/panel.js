@@ -130,8 +130,21 @@
   $('#openSettings').addEventListener('click', () => openPage('settings'));
 
   /* ---------- rendering ---------- */
+  // the butterfly by the Titli title (and on the "sent" toast) wears the wings you picked in Settings
+  function paintMark() {
+    const style = (S && S.settings && S.settings.style) || 'rose';
+    const w = document.querySelector(`.wing[data-style="${style}"]`) || document.querySelector('.wing');
+    const name = w && w.querySelector('span') ? w.querySelector('span').textContent : '';
+    for (const m of $$('.head .mark, .toast > svg')) {
+      for (const v of ['--mark-fill', '--mark-ink', '--mark-rose']) m.style.setProperty(v, w ? w.style.getPropertyValue(v) : '');
+    }
+    const head = $('.head .mark');
+    if (head) { head.removeAttribute('aria-hidden'); head.setAttribute('role', 'img'); head.setAttribute('aria-label', `Your butterfly: ${name}`); }
+  }
+
   function render() {
     if (!S) return;
+    paintMark();
     if (!S.me.name) {
       show('welcome1');
       // Windows tucks new tray icons under the ^ arrow, so say where Titli lives

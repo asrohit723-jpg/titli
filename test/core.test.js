@@ -397,3 +397,31 @@ test('a Mac never asks the Keychain: safeStorage is never touched, and an old en
   const win = dataLock({ platform: 'win32', packaged: true, smoke: false, safeStorage: { isEncryptionAvailable: () => { asked++; return true; }, encryptString: s => Buffer.from(s), decryptString: b => b.toString() } });
   assert.equal(win.encrypt, true); assert.equal(asked, 1);
 });
+
+test('a 0.1.32 friend who made the code: their notes and hearts still reach us, before and after we restart', async t => {
+  const { TitliCore: V1 } = require('./fixtures/v1/titli');
+  const ntfy = createMockNtfy();
+  const url = await ntfy.listen();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-'));
+  const oldStore = new Store(path.join(dir, 'o.json')); oldStore.load(); oldStore.state.settings.relay = url;
+  const old = new V1({ store: oldStore, relay: new NtfyRelay({ server: url, watchdogMs: 3000 }) }); old.setName('Priya'); old.start();
+  let rohit = makeCore(url, 'Rohit');
+  t.after(async () => { rohit.stop(); old.stop(); await ntfy.close(); });
+  const inv = old.createInvite();
+  await new Promise(r => setTimeout(r, 300));
+  rohit.joinCode(inv.code);
+  await until(() => rohit.s.circles.length === 1 && old.s.circles.length === 1, 6000, 'paired');
+  assert.equal(rohit.s.circles[0].v, 1, 'stays on the old protocol while they are on 0.1.32');
+  old.send({ circleId: old.s.circles[0].id, text: 'hi from windows' });
+  await until(() => rohit.s.inbox.length === 1, 4000, 'note arrives');
+  assert.equal(rohit.s.inbox[0].text, 'hi from windows');
+  await until(() => old.snapshot().sent[0].status.text.startsWith('Arrived'), 4000, 'they see it arrived');
+  // we quit (or update) and start again from the same saved file
+  rohit.stop();
+  const again = new Store(rohit.store.file); again.load();
+  rohit = new TitliCore({ store: again, relay: new NtfyRelay({ server: url, watchdogMs: 3000 }) }); rohit.start();
+  await until(() => rohit.relayStatus === 'online', 4000, 'online again');
+  old.send({ circleId: old.s.circles[0].id, text: null });
+  await until(() => rohit.s.inbox.length === 2, 4000, 'heart arrives after a restart');
+  assert.equal(rohit.s.inbox[1].g, '❤️');
+});
