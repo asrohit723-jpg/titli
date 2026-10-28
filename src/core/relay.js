@@ -18,6 +18,7 @@ class NtfyRelay extends EventEmitter {
     this.topics = new Map();   // topic -> since (unix seconds) for that topic
     this.caught = new Map();   // topic -> time up to which we were connected and listening
     this.status = 'idle';
+    this.clockOffset = 0;      // this computer's clock minus the relay's, when it's off by minutes or more
     this._ctrl = null;
     this._stopped = true;
     this._attempt = 0;
@@ -84,8 +85,9 @@ class NtfyRelay extends EventEmitter {
   _since() {
     let since = Infinity;
     for (const [t, s] of this.topics) since = Math.min(since, Math.max(s, (this.caught.get(t) || 0) - 5));
-    if (!isFinite(since)) since = Math.floor(this.now() / 1000);
-    return Math.max(0, Math.floor(since));
+    if (!isFinite(since)) since = this._serverNowSec();
+    // a clock set fast makes "since" land in the future, and the relay would hold back everything
+    return Math.max(0, Math.floor(Math.min(since, this._serverNowSec())));
   }
 
   // how far back to remember for a topic we are about to add
@@ -134,6 +136,8 @@ class NtfyRelay extends EventEmitter {
 
   _line(line) {
     let m; try { m = JSON.parse(line); } catch (e) { return; }
+    // the relay says what time it is on every connect and keepalive: that's how we notice a computer clock set wrong
+    if ((m.event === 'open' || m.event === 'keepalive') && Number.isFinite(m.time) && m.time > 0) this._clock(m.time);
     if (m.event === 'open') return;
     if (m.event === 'keepalive') {
       const t = m.time || Math.floor(this.now() / 1000);
@@ -143,10 +147,23 @@ class NtfyRelay extends EventEmitter {
     }
     if (m.event !== 'message' || !m.topic || typeof m.message !== 'string') return;
     const since = this.topics.get(m.topic);
-    if (since === undefined || (m.time && m.time < since - 5)) return;
+    if (since === undefined || (m.time && m.time < Math.min(since, this._serverNowSec()) - 5)) return;
     if (m.time && (this.caught.get(m.topic) || 0) < m.time) this.caught.set(m.topic, m.time);
     this.emit('message', { id: m.id, time: m.time, topic: m.topic, body: m.message });
   }
+
+  // how far this computer's clock is from the relay's (ms; positive = ahead). Small differences don't count:
+  // the relay only gives whole seconds, and the trip takes a moment.
+  _clock(serverSec) {
+    const off = this.now() - serverSec * 1000;
+    const next = Math.abs(off) < 2 * 60 * 1000 ? 0 : Math.round(off / 1000) * 1000;
+    if (Math.abs(next - this.clockOffset) >= 60 * 1000 || (next === 0) !== (this.clockOffset === 0)) {
+      this.clockOffset = next;
+      this.emit('clock', next);
+    }
+  }
+
+  _serverNowSec() { return Math.floor((this.now() - this.clockOffset) / 1000); }
 
   _pause(ms) {
     return new Promise(res => {

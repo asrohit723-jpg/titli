@@ -169,6 +169,7 @@
     st.className = 'status';
     let t = 'Ready';
     if (S.relayStatus === 'offline') { st.classList.add('off'); t = 'Offline · butterflies go when you’re back online'; }
+    else if (Math.abs(S.clockOff || 0) >= 30 * 60 * 1000) { st.classList.add('hold'); t = 'Your computer’s clock is off · set it to automatic'; }
     else if (S.presence && S.presence.busy) { st.classList.add('hold'); t = `Holding butterflies · ${S.presence.text || 'you’re busy'}`; }
     else if (S.inboxCount) t = S.inboxCount === 1 ? 'A butterfly is on its way to you' : `${S.inboxCount} butterflies on the way to you`;
     $('#statusText').textContent = t;

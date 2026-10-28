@@ -29,8 +29,14 @@ const HOUR = 3600 * 1000, DAY = 24 * HOUR;
 const INVITE_TTL = DAY, USED_INVITE_TTL = 10 * 60 * 1000;
 // after a key change, keep listening on the old channel for stragglers (the owner longer, to help anyone who missed it)
 const KEEP_OLD_KEY = DAY, KEEP_OLD_KEY_OWNER = 7 * DAY;
-// the relay keeps messages for 12 hours; anything claiming to be much older (or from the future) is a replay
-const MAX_AGE = 14 * HOUR, MAX_SKEW = 10 * 60 * 1000;
+// the relay keeps messages for 12 hours; anything claiming to be much older is a replay. The margin ahead is wide
+// because some computers have their clock set hours fast (the wrong time zone, set by hand), and older versions
+// stamp messages with that clock. Titli itself now stamps them with the relay's time when this computer's clock is off.
+const MAX_AGE = 14 * HOUR, MAX_AHEAD = 15 * HOUR;
+// a note nobody has confirmed yet is sent again before the relay forgets it (12 hours), for up to three days
+const RESEND_EVERY = 10 * HOUR, RESEND_FOR = 3 * DAY;
+// a pair that switched to the new key keeps the old channel until the other side is heard on the new one
+const KEEP_UPGRADE_KEY = 30 * DAY, UPGRADE_ASK_EVERY = 6 * HOUR;
 const STYLES = ['rose', 'peony', 'gold', 'midnight', 'sky', 'leaf', 'monarch'];
 // what the reaction row offers; older versions also send 🥰 and 😘, which still count
 const REACTIONS = ['❤️', '😂', '🤗', '👍', '😊', 'butterfly'];
@@ -64,12 +70,21 @@ class TitliCore extends EventEmitter {
     // people paired before gestures existed keep getting hearts; the old names become their emoji
     for (const c of this.s.circles) c.tap = tapOf(c.tap);
     for (const it of this.s.inbox) if (it.g != null) it.g = tapOf(it.g);
+    if (!Array.isArray(this.s.seenNotes)) this.s.seenNotes = [];
+    // pairs an older Titli switched to the new key: keep the old channel until the other side is heard on the new one,
+    // so a switch only one side finished can still be repaired
+    for (const c of this.s.circles) {
+      if (c.kind !== 'pair' || c.v !== 2 || !(c.old || []).length || c.upDone) continue;
+      c.upDone = {};
+      for (const o of c.old) { if (!o.at) o.at = o.until - KEEP_OLD_KEY; o.until = Math.max(o.until, this.now() + KEEP_UPGRADE_KEY); }
+    }
     // circles saved by older versions don't list our keys in our own entry
     for (const c of this.s.circles) if (c.members && c.members[this.me.id]) c.members[this.me.id] = { ...c.members[this.me.id], ...this._pub };
     this._handled = new Set(this.s.handled);
     relay.restoreState(this.s.relayCaught);
     relay.on('message', m => this._onRelay(m));
     relay.on('caught', () => this._persistRelay());
+    relay.on('clock', () => this._changed());
     relay.on('status', st => {
       this.relayStatus = st;
       if (st === 'online') { this.flushOutbox(); this._resendJoins(); }
@@ -87,7 +102,7 @@ class TitliCore extends EventEmitter {
     this.relay.setServer(this.s.settings.relay);
     this.relay.start();
     this._announce();
-    this._timer = setInterval(() => { this.flushOutbox(); this._prune(); }, 30000);
+    this._timer = setInterval(() => { this.flushOutbox(); this._prune(); this._resendNotes(); this._askUpgrades(); }, 30000);
   }
 
   stop() {
@@ -358,6 +373,7 @@ class TitliCore extends EventEmitter {
       me: { name: me.name },
       settings: { ...this.s.settings },
       relayStatus: this.relayStatus,
+      clockOff: this.relay.clockOffset || 0,
       circles,
       invites: this.s.invites.filter(i => i.kind !== 'group' && !i.circleId).map(i => ({ code: i.code, createdAt: i.createdAt })),
       joining: this.s.joining.map(j => ({ code: j.code, kind: j.kind, createdAt: j.createdAt })),
@@ -395,7 +411,9 @@ class TitliCore extends EventEmitter {
   }
 
   _circle(id) { return this.s.circles.find(c => c.id === id) || null; }
-  _nowSec() { return Math.floor(this.now() / 1000); }
+  _nowSec() { return Math.floor(this._trueNow() / 1000); }
+  // the real time: this computer's clock, corrected by the relay's when it's set wrong
+  _trueNow() { return this.now() - (this.relay.clockOffset || 0); }
 
   _syncTopics() {
     const map = new Map(), now = this.now();
@@ -429,7 +447,7 @@ class TitliCore extends EventEmitter {
     const msg = open(k.key, body);
     if (!msg || typeof msg.t !== 'string' || !isId(msg.from) || msg.from === this.me.id) return;
     // too old or from the future: a replay of something the relay saw before
-    if (msg.ts != null) { const ts = Number(msg.ts), now = this.now(); if (!(ts > now - MAX_AGE && ts < now + MAX_SKEW)) return; }
+    if (msg.ts != null) { const ts = Number(msg.ts), now = this._trueNow(); if (!(ts > now - MAX_AGE && ts < now + MAX_AHEAD)) return; }
     try {
       if (k.kind === 'invite') this._onInvite(this.s.invites.find(i => i.raw === k.ref), msg, topic);
       else if (k.kind === 'joining') this._onJoining(this.s.joining.find(j => j.raw === k.ref), msg, time, topic);
@@ -581,11 +599,25 @@ class TitliCore extends EventEmitter {
     if (c.kind === 'pair' && name) c.name = name;
     m = c.members[msg.from];
     const fromName = m.name;
+    // the other side of an upgraded pair is talking on the new key: the switch is done, the old channel can go soon
+    if (!viaOldKey && c.kind === 'pair' && c.upDone) {
+      delete c.upDone; c.upConfirmed = true;
+      const soon = this.now() + KEEP_OLD_KEY;
+      for (const o of c.old || []) o.until = Math.min(o.until, soon);
+    }
 
     switch (msg.t) {
       case 'note': {
         if (msg.text != null && typeof msg.text !== 'string') return;
-        if (!isId(msg.id) || this.s.inbox.some(x => x.id === msg.id) || this.s.received.some(x => x.id === msg.id)) return;
+        if (!isId(msg.id)) return;
+        const waiting = this.s.inbox.some(x => x.id === msg.id), shown = this.s.received.some(x => x.id === msg.id) || this.s.seenNotes.some(([id]) => id === msg.id);
+        if (waiting || shown) {
+          // sent again because they never heard back: tell them once more
+          if (msg.again && this.s.settings.sendReceipts) this._postCircle(c, { t: shown ? 'seen' : 'got', id: msg.id });
+          return;
+        }
+        this.s.seenNotes.push([msg.id, this.now()]);
+        if (this.s.seenNotes.length > 600) this.s.seenNotes.splice(0, this.s.seenNotes.length - 600);
         const item = {
           kind: 'note', id: msg.id, circleId: c.id, from: msg.from, fromName,
           circleName: c.kind === 'group' ? c.name : null, text: msg.text == null ? null : clip(msg.text, 80) || null,
@@ -644,7 +676,9 @@ class TitliCore extends EventEmitter {
         }
         break;
       case 'upgrade':
-        if (c.kind === 'pair' && c.v !== 2 && m.pub) this._onUpgrade(c, msg, time);
+        if (c.kind !== 'pair' || !m.pub) break;
+        if (c.v !== 2) this._onUpgrade(c, msg, time);
+        else if (viaOldKey && !msg.re) this._repairUpgrade(c, msg, topic);
         break;
       case 'rekey':
         this._onRekey(c, msg, time);
@@ -660,7 +694,43 @@ class TitliCore extends EventEmitter {
   _startUpgrade(c) {
     if (c.kind !== 'pair' || c.v === 2) return;
     if (!c.up) c.up = { eph: identity.ephemeral() };
+    c.up.askedAt = this.now();
     this._postCircle(c, { t: 'upgrade', ...this._pub, eph: c.up.eph.pub });
+  }
+
+  // a pair still on the old key asks again every few hours, in case the other side missed it
+  _askUpgrades() {
+    if (this.relayStatus !== 'online') return;
+    for (const c of this.s.circles) if (c.kind === 'pair' && c.v !== 2 && this.now() - ((c.up && c.up.askedAt) || 0) > UPGRADE_ASK_EVERY) this._startUpgrade(c);
+  }
+
+  // we switched to the new key, but they're still asking on the old channel: they never got our answer
+  _repairUpgrade(c, msg, topic) {
+    // once they've talked to us on the new key, an old ask can only be a replay
+    if (c.upConfirmed || !identity.isKey(msg.eph)) return;
+    const o = (c.old || []).find(x => x.topic === topic);
+    if (!o) return;
+    const now = this.now();
+    if (c.repairedAt && now - c.repairedAt < 60 * 1000) return;   // copies of the same ask arrive together
+    const key = codes.keyFor(Buffer.from(o.secret, 'hex'));
+    if (c.upDone && c.upDone.peerEph === msg.eph && c.upDone.eph) {
+      // say it again: with it they land on the same key we did
+      c.repairedAt = now;
+      this._postSigned(o.topic, key, { t: 'upgrade', re: 1, ...this._pub, eph: c.upDone.eph });
+      return;
+    }
+    // we don't know what we answered (an older Titli switched), or they started over. Once our answer has left the
+    // relay (12 hours), they can't finish with it: start the exchange again with them, on the old channel.
+    if (!o.at || now - o.at < 13 * HOUR) return;
+    c.repairedAt = now;
+    const eph = identity.ephemeral();
+    this._postSigned(o.topic, key, { t: 'upgrade', re: 1, ...this._pub, eph: eph.pub });
+    const both = [eph.pub, msg.eph].sort().join('|');
+    const secret = identity.kdf(identity.dh(eph.priv, msg.eph), Buffer.from(o.secret, 'hex'), `titli-upgrade-v2|${both}`).toString('hex');
+    o.until = Math.max(o.until, now + KEEP_UPGRADE_KEY);
+    this._switchKey(c, secret, this._nowSec() - 10, KEEP_UPGRADE_KEY);
+    c.upDone = { eph: eph.pub, peerEph: msg.eph };
+    this._syncTopics();
   }
 
   _onUpgrade(c, msg, time) {
@@ -670,7 +740,8 @@ class TitliCore extends EventEmitter {
     if (c.up.peerEph !== msg.eph) { c.up.peerEph = msg.eph; this._postCircle(c, { t: 'upgrade', ...this._pub, eph: c.up.eph.pub }); }
     const both = [c.up.eph.pub, msg.eph].sort().join('|');
     const secret = identity.kdf(identity.dh(c.up.eph.priv, msg.eph), Buffer.from(c.secret, 'hex'), `titli-upgrade-v2|${both}`).toString('hex');
-    this._switchKey(c, secret, (time || this._nowSec()) - 10, KEEP_OLD_KEY);
+    this._switchKey(c, secret, (time || this._nowSec()) - 10, KEEP_UPGRADE_KEY);
+    c.upDone = { eph: c.up.eph.pub, peerEph: msg.eph };
     c.v = 2; delete c.up;
     this._syncTopics();
     this.emit('secured', { name: c.members[msg.from].name });
@@ -761,7 +832,7 @@ class TitliCore extends EventEmitter {
   _switchKey(c, secret, sinceSec, keepFor) {
     const now = this.now();
     c.old = (c.old || []).filter(o => o.until > now).slice(-3);
-    c.old.push({ topic: c.topic, secret: c.secret, since: c.since, until: now + keepFor });
+    c.old.push({ topic: c.topic, secret: c.secret, since: c.since, until: now + keepFor, at: now });
     c.secret = secret; c.topic = codes.topicFor(Buffer.from(secret, 'hex')); c.since = sinceSec;
   }
 
@@ -787,7 +858,7 @@ class TitliCore extends EventEmitter {
 
   // everything we send carries who it's from, when, and our signature over all of it
   _postSigned(topic, key, obj, sentId) {
-    const payload = { ...obj, v: obj.v || 2, from: this.me.id, name: this.me.name, ts: this.now() };
+    const payload = { ...obj, v: obj.v || 2, from: this.me.id, name: this.me.name, ts: this._trueNow() };
     for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
     payload.sig = identity.sign(this.me.keys, topic, payload);
     this._post(topic, seal(key, payload), sentId);
@@ -823,12 +894,29 @@ class TitliCore extends EventEmitter {
     } finally { this._flushing = false; }
   }
 
+  // notes nobody has confirmed: send them again before the relay forgets them (it keeps 12 hours), for up to 3 days.
+  // Whoever already has it just answers again.
+  _resendNotes() {
+    if (this.relayStatus !== 'online') return;
+    const now = this.now();
+    for (const rec of this.s.sent) {
+      if (now - rec.at > RESEND_FOR || now - (rec.lastTry || rec.at) < RESEND_EVERY) continue;
+      const c = this._circle(rec.circleId);
+      if (!c || !Object.entries(rec.rc).some(([id, r]) => r.st === 'sent' && c.members[id])) continue;
+      rec.lastTry = now; rec.tries = (rec.tries || 0) + 1;
+      const g = rec.text == null ? tapOf(rec.g) : undefined;
+      this._postCircle(c, { t: 'note', id: rec.id, text: rec.text, g: g && Taps.legacyName(g), e: g, style: rec.style, at: rec.at, again: true });
+      this._save();
+    }
+  }
+
   _prune() {
     const now = this.now();
     const before = this.s.invites.length + this.s.joining.length + this.s.circles.reduce((n, c) => n + (c.old || []).length, 0);
     this.s.invites = this.s.invites.filter(i => i.kind === 'group' ? now - i.createdAt < INVITE_TTL : (i.circleId ? now - i.usedAt < USED_INVITE_TTL : now - i.createdAt < INVITE_TTL));
     this.s.joining = this.s.joining.filter(j => now - j.createdAt < INVITE_TTL);
     for (const c of this.s.circles) c.old = (c.old || []).filter(o => o.until > now);
+    this.s.seenNotes = (this.s.seenNotes || []).filter(([, t]) => now - t < RESEND_FOR + DAY);
     // notes kept for someone you're no longer connected to
     if (this.s.quickFor) for (const id of Object.keys(this.s.quickFor)) if (!this._circle(id)) delete this.s.quickFor[id];
     const after = this.s.invites.length + this.s.joining.length + this.s.circles.reduce((n, c) => n + c.old.length, 0);
