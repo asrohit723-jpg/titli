@@ -89,3 +89,18 @@ test('flight: every landing spot (corners and the middle of each side) gets smoo
   }
   assert.ok(fallbacks / n < .01, `the plain fallback is almost never needed (${fallbacks}/${n})`);
 });
+
+test('flight: the butterfly stays tiny the whole way, never looking more than about 1.1 times its size', () => {
+  let biggest = 1;
+  for (const [W, H, mb] of SCREENS) for (let seed = 1; seed <= 40; seed++) for (const kind of ['entry', 'exit']) {
+    const ctx = ctxFor(W, H, mb, seeded(seed * 53 + W + (kind === 'entry' ? 1 : 2)));
+    const names = kind === 'entry' ? Flight.ENTRIES : Flight.EXITS;
+    for (const name of names) {
+      const r = Flight.build(kind, name, ctx);
+      const curve = ctx.makeCurve(r.points);
+      for (let i = 0; i <= 200; i++) { const q = curve.getPointAt(i / 200); biggest = Math.max(biggest, ctx.D / (ctx.D - q.z)); }
+    }
+  }
+  assert.ok(biggest <= 1.11, `largest it ever looks: ${biggest.toFixed(2)}x`);
+  assert.ok(!Flight.EXITS.includes('toward'), 'no flying out toward you');
+});

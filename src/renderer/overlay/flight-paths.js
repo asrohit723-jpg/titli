@@ -139,18 +139,18 @@
       return { moods: ['playful', 'easy'], approach: up > 0 ? ['level'] : ['rise'], pts };
     },
 
-    // from right beside you: it starts close, big, and flies away into the screen
+    // in from a bottom corner, rising across the screen toward the perch (it stays its own small size)
     flyby: (t, P) => {
       const left = t.rng() < .6, sx = left ? -1 : 1;
       return { moods: ['easy'], approach: left ? ['level', 'rise'] : ['level'], pts: [
-        t.p(sx * t.W * t.r(.6, .66), -t.H * t.r(.6, .66), t.D * t.r(.34, .38)),
-        t.p(sx * t.W * t.r(.34, .38), -t.H * t.r(.26, .3), t.D * .2),
+        t.p(sx * t.W * t.r(.6, .66), -t.H * t.r(.6, .66), t.D * t.r(.07, .08)),
+        t.p(sx * t.W * t.r(.34, .38), -t.H * t.r(.26, .3), t.D * .06),
         ...(left
-          ? [t.p(-t.W * t.r(.15, .19), -t.H * t.r(.08, .12), t.D * .1), t.p(-t.W * t.r(0, .04), P.y - t.H * t.r(.3, .36), t.D * .05)]
+          ? [t.p(-t.W * t.r(.15, .19), -t.H * t.r(.08, .12), t.D * .05), t.p(-t.W * t.r(0, .04), P.y - t.H * t.r(.3, .36), t.D * .04)]
           : (() => {   // from the right it swings round through the left in half an ellipse, then heads for the perch
             const cx = -t.W * t.r(.04, .08), rx = t.W * t.r(.13, .16), yb = -t.H * t.r(.1, .14), yt = P.y - t.H * t.r(.05, .08);
             const cy = (yb + yt) / 2, ry = (yt - yb) / 2, on = (a, z) => t.p(cx + rx * Math.cos(a), cy + ry * Math.sin(a), z);
-            return [t.p(cx + rx * .6, yb, t.D * .1), on(Math.PI * 1.25, t.D * .07), on(Math.PI, t.D * .05), on(Math.PI * .75, t.D * .04), t.p(cx + rx * .4, yt, t.D * .03)];
+            return [t.p(cx + rx * .6, yb, t.D * .05), on(Math.PI * 1.25, t.D * .045), on(Math.PI, t.D * .04), on(Math.PI * .75, t.D * .035), t.p(cx + rx * .4, yt, t.D * .03)];
           })())] };
     },
 
@@ -216,13 +216,6 @@
       return { moods: ['playful', 'easy'], pts };
     },
 
-    // it flies out toward you and past your shoulder
-    toward: (t, c) => ({ moods: ['easy'], pts: [
-      t.p(c.x - t.W * t.r(.12, .16), c.y - t.H * t.r(.1, .14), t.D * .06),
-      t.p(c.x - t.W * t.r(.28, .32), c.y - t.H * t.r(.33, .38), t.D * .2),
-      t.p(c.x - t.W * t.r(.5, .56), -t.H * t.r(.36, .42), t.D * .42),
-      t.p(c.x - t.W * t.r(.66, .74), -t.H * .9, t.D * .62)] }),
-
     // a long drift across to the left edge
     drift: (t, c) => {
       const amp = t.H * t.r(.04, .07), y1 = c.y - t.H * t.r(.2, .5), pts = [t.p(c.x - t.W * t.r(.14, .18), c.y - t.H * t.r(.06, .1))];
@@ -283,12 +276,16 @@
     return Object.assign({}, m, { freq: m.freq + t.r(-.12, .12) });
   }
 
+  // the butterfly stays tiny: never closer to you than this (at most about 1.1 times its size on screen)
+  const MAX_DEPTH = .09;
+  const shallow = (pts, D) => pts.map(q => (q.z || 0) > D * MAX_DEPTH ? Object.assign({}, q, { z: D * MAX_DEPTH }) : q);
+
   function build(kind, name, ctx, t) {
     t = t || tools(ctx);
     const at = ctx.at, fig = (kind === 'entry' ? ENTRIES : EXITS)[name](t, at);
-    if (kind !== 'entry') return { fig, approach: null, points: [{ x: at.x, y: at.y, z: at.z || 0 }].concat(liftoff(t, at, fig.pts[0]), fig.pts) };
+    if (kind !== 'entry') return { fig, approach: null, points: shallow([{ x: at.x, y: at.y, z: at.z || 0 }].concat(liftoff(t, at, fig.pts[0]), fig.pts), t.D) };
     const approach = typeof fig.approach === 'string' ? fig.approach : t.pick(fig.approach);
-    return { fig, approach, points: fig.pts.concat(APPROACHES[approach](t, at), [{ x: at.x, y: at.y, z: 0 }]) };
+    return { fig, approach, points: shallow(fig.pts.concat(APPROACHES[approach](t, at), [{ x: at.x, y: at.y, z: 0 }]), t.D) };
   }
 
   /* ---------- perching anywhere ----------
