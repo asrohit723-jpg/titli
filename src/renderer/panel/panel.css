@@ -106,11 +106,21 @@ kbd{font-family:var(--font-body)}
 .heart-btn svg.gone{display:none}
 .tap-emoji{font-size:19px; line-height:1}
 .act-emoji{font-size:13px; margin-right:5px}
-.tap-row{flex-basis:100%; display:flex; align-items:center; justify-content:space-between; gap:8px}
+.act-emoji.alone{font-size:16px; margin-right:0}
+.tap-wrap{flex-basis:100%; display:flex; flex-direction:column; gap:8px}
+.tap-row{flex-basis:100%; display:flex; flex-direction:column; align-items:flex-start; gap:7px}
 .tap-lbl{font-size:12px; font-weight:600; color:var(--mist)}
-.tap-chips{display:flex; gap:4px}
-.tap-chip{width:36px; height:32px; border-radius:10px; border:1px solid var(--line-2); background:transparent; font-size:16px; line-height:1; display:grid; place-items:center; padding:0}
+.tap-chips{display:flex; flex-wrap:wrap; gap:4px}
+.tap-chip{width:30px; height:30px; border-radius:9px; border:1px solid var(--line-2); background:transparent; font-size:16px; line-height:1; display:grid; place-items:center; padding:0}
 .tap-chip[aria-checked="true"]{border-color:var(--accent); background:var(--tint); box-shadow:0 0 0 1px var(--accent) inset}
+.tap-chip.more{color:var(--mist); border-style:dashed}
+.tap-chip.more[aria-expanded="true"]{color:var(--accent); border-color:var(--accent); border-style:solid}
+.tap-chip.more svg{width:14px; height:14px}
+.tap-any{display:flex; flex-direction:column; gap:4px}
+.tap-input{width:100%; height:34px; padding:0 11px; border-radius:10px; border:1px solid var(--line-2); background:var(--bg); color:var(--ink); font-size:14px}
+.tap-input::placeholder{color:var(--dim)}
+.tap-input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset}
+.tap-any .hint:empty{display:none}
 .heart-label{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .heart-btn kbd{position:absolute; right:14px; top:17px; min-width:22px; height:22px; padding:0 6px; border-radius:6px; background:var(--kbd-on-accent); color:var(--kbd-on-accent-ink); font-size:11px; font-weight:700; line-height:22px; text-align:center}
 .heart-btn.sent{animation:pulse .5s ease}

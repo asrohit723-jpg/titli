@@ -8,14 +8,10 @@
   let view = null;         // welcome1 | welcome2 | main | settings | quick
   let tab = 'send';
   let toKey = null;        // who the Send tab sends to
-  // the one-tap butterfly, per person: what it's called, its emoji, and the big button's words
-  const GESTURE = {
-    heart: { label: 'A heart', emoji: '❤️', button: n => `Send a heart to ${n}` },
-    hug: { label: 'A hug', emoji: '🤗', button: n => `Send a hug to ${n}` },
-    wave: { label: 'A wave', emoji: '👋', button: n => `Wave at ${n}` },
-    cheer: { label: 'A cheer', emoji: '🙌', button: n => `Cheer ${n} on` }
-  };
-  const gestureOf = g => GESTURE[g] || GESTURE.heart;
+  // the one-tap butterfly, per person: any emoji (shared with the main process: core/taps.js)
+  const Taps = window.Taps;
+  const tapOf = g => Taps.emojiOf(g) || Taps.HEART;
+  let pickingFor = null;   // whose "any emoji" box is open
   let qeFor = null;        // whose notes the editor shows (null: everyone)
   // their own notes first, then the ones for everyone
   const notesFor = id => {
@@ -135,8 +131,6 @@
 
   /* ---------- rendering ---------- */
   function render() {
-    // the app's colour follows your butterfly
-    if (S && S.settings) document.documentElement.dataset.accent = S.settings.style || 'rose';
     if (!S) return;
     if (!S.me.name) {
       show('welcome1');
@@ -248,11 +242,11 @@
     if (!list.some(c => c.id === toKey)) toKey = (list.find(c => c.id === S.lastTo) || list[0] || {}).id || null;
     renderToRow($('#toRow'), list, toKey, id => { toKey = id; renderSend(); });
     const c = list.find(x => x.id === toKey);
-    const gs = gestureOf(c && c.tap);
-    $('#heartLabel').textContent = c ? gs.button(c.name) : 'Send a heart';
-    $('#tapHeart').classList.toggle('gone', !!(c && c.tap && c.tap !== 'heart'));
-    $('#tapEmoji').hidden = !(c && c.tap && c.tap !== 'heart');
-    $('#tapEmoji').textContent = gs.emoji;
+    const tap = tapOf(c && c.tap), heart = Taps.isHeart(tap);
+    $('#heartLabel').textContent = c ? Taps.button(tap, c.name) : 'Send a heart';
+    $('#tapHeart').classList.toggle('gone', !heart);
+    $('#tapEmoji').hidden = heart;
+    $('#tapEmoji').textContent = heart ? '' : tap;
     $('#heartBtn').title = c ? `Change what one tap sends in People → ${c.name}` : '';
     renderQuick();
     renderCompose();
@@ -353,11 +347,66 @@
     }
   }
 
+  function tapPicker(c) {
+    const tap = tapOf(c.tap);
+    const wrap = el('div', 'tap-row');
+    wrap.append(el('span', 'tap-lbl', 'One tap sends'));
+    const chips = el('div', 'tap-chips');
+    chips.setAttribute('role', 'radiogroup');
+    chips.setAttribute('aria-label', `What one tap sends ${c.name}`);
+    const choices = Taps.SUGGESTED.includes(tap) ? Taps.SUGGESTED : [...Taps.SUGGESTED, tap];
+    for (const e of choices) {
+      const b = btn('tap-chip');
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String(e === tap));
+      b.setAttribute('aria-label', Taps.label(e) || e);
+      b.title = Taps.label(e) || e;
+      b.textContent = e;
+      b.addEventListener('click', async () => { pickingFor = null; await call('setTap', c.id, e); });
+      chips.append(b);
+    }
+    const more = btn('tap-chip more');
+    more.setAttribute('aria-label', 'Pick any emoji');
+    more.setAttribute('aria-expanded', String(pickingFor === c.id));
+    more.title = 'Pick any emoji';
+    more.append(icon('i-plus'));
+    more.addEventListener('click', () => {
+      pickingFor = pickingFor === c.id ? null : c.id;
+      if (!pickingFor) api.ui('emojiPicked');
+      renderPeople();
+      if (pickingFor) { const inp = $('.tap-input'); if (inp) { inp.focus(); api.ui('emojiPicker'); } }
+    });
+    chips.append(more);
+    wrap.append(chips);
+    if (pickingFor !== c.id) return wrap;
+
+    // type, paste or pick one from the system's emoji picker
+    const row = el('div', 'tap-any');
+    const inp = el('input', 'tap-input');
+    inp.type = 'text'; inp.maxLength = 40; inp.autocomplete = 'off'; inp.spellcheck = false;
+    inp.placeholder = 'Type or paste any emoji';
+    inp.setAttribute('aria-label', `Any emoji for ${c.name}`);
+    const hint = el('span', 'hint', '');
+    const done = () => { pickingFor = null; api.ui('emojiPicked'); renderPeople(); };
+    inp.addEventListener('input', async () => {
+      const e = Taps.firstEmoji(inp.value);
+      if (!e) { hint.textContent = inp.value.trim() ? 'Just one emoji, no words.' : ''; return; }
+      pickingFor = null; api.ui('emojiPicked');
+      const r = await call('setTap', c.id, e);
+      if (!r.ok) toast(r.error || 'That didn’t work');
+    });
+    inp.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.stopPropagation(); done(); } });
+    row.append(inp, hint);
+    const all = el('div', 'tap-wrap');
+    all.append(wrap, row);
+    return all;
+  }
+
   function noteLine(text, kind, g) {
     const n = el('span', 'act-note');
     if (kind === 'visit') n.append(icon('bfly', 'bf'), document.createTextNode('A butterfly back'));
-    else if (text == null && (!g || g === 'heart')) n.append(icon('i-heart', 'heart'), document.createTextNode('A heart'));
-    else if (text == null) n.append(el('span', 'act-emoji', gestureOf(g).emoji), document.createTextNode(gestureOf(g).label));
+    else if (text == null && Taps.isHeart(g)) n.append(icon('i-heart', 'heart'), document.createTextNode('A heart'));
+    else if (text == null) n.append(el('span', 'act-emoji' + (Taps.label(g) ? '' : ' alone'), tapOf(g)), document.createTextNode(Taps.label(g) || ''));
     else n.textContent = text;
     return n;
   }
@@ -486,24 +535,8 @@
       return box;
     }
 
-    // what one tap sends them: a heart for some, a wave or a hug for others
-    const tapRow = el('div', 'tap-row');
-    tapRow.append(el('span', 'tap-lbl', 'One tap sends'));
-    const chips = el('div', 'tap-chips');
-    chips.setAttribute('role', 'radiogroup');
-    chips.setAttribute('aria-label', `What one tap sends ${c.name}`);
-    for (const [key, g] of Object.entries(GESTURE)) {
-      const b = btn('tap-chip');
-      b.setAttribute('role', 'radio');
-      b.setAttribute('aria-checked', String((c.tap || 'heart') === key));
-      b.setAttribute('aria-label', g.label);
-      b.title = g.label;
-      b.textContent = g.emoji;
-      b.addEventListener('click', async () => { await call('setTap', c.id, key); });
-      chips.append(b);
-    }
-    tapRow.append(chips);
-    box.append(tapRow);
+    // what one tap sends them: a heart for some, a wave or a kiss for others, or any emoji at all
+    box.append(tapPicker(c));
 
     // the same five emoji on both screens means no one is sitting in the middle
     const safe = el('div', 'safety');

@@ -266,39 +266,69 @@ test('quick notes: some just for one person, shown first for them only', async t
   assert.equal(rohit.s.quickFor[toAmma], undefined);
 });
 
-test('one-tap gestures: each person gets their own, and older versions still see a heart', async t => {
-  const { TitliCore: V1 } = require('./fixtures/v1/titli');
+test('one tap sends any emoji you pick for that person, and older versions still get something sensible', async t => {
+  const { TitliCore: V1 } = require('./fixtures/v1/titli');      // 0.1.32: no gestures at all
+  const { TitliCore: V53 } = require('./fixtures/v053/titli');   // 0.1.51 to 0.1.53: heart, hug, wave and cheer by name
   const ntfy = createMockNtfy();
   const url = await ntfy.listen();
   const rohit = makeCore(url, 'Rohit'), amma = makeCore(url, 'Amma');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-')), oldStore = new Store(path.join(dir, 'o.json')); oldStore.load();
-  oldStore.state.settings.relay = url;
-  const old = new V1({ store: oldStore, relay: new NtfyRelay({ server: url, watchdogMs: 3000 }) }); old.setName('Oldie'); old.start();
-  t.after(async () => { rohit.stop(); amma.stop(); old.stop(); await ntfy.close(); });
+  const oldCore = (V, name) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titli-')), st = new Store(path.join(dir, 'o.json')); st.load();
+    st.state.settings.relay = url;
+    const c = new V({ store: st, relay: new NtfyRelay({ server: url, watchdogMs: 3000 }) }); c.setName(name); c.start(); return c;
+  };
+  const old = oldCore(V1, 'Oldie'), mid = oldCore(V53, 'Midi');
+  t.after(async () => { rohit.stop(); amma.stop(); old.stop(); mid.stop(); await ntfy.close(); });
   const inv = rohit.createInvite();
   await until(() => rohit.relayStatus === 'online', 4000, 'online');
   amma.joinCode(inv.code);
   await until(() => rohit.s.circles.length === 1 && amma.s.circles.length === 1, 5000, 'paired');
   const c = rohit.s.circles[0];
-  assert.equal(c.tap, 'wave', 'new people start with a wave');
-  assert.equal(rohit.snapshot().circles[0].tap, 'wave');
-  assert.ok(rohit.setTap(c.id, 'hug').ok);
-  assert.equal(rohit.setTap(c.id, 'kiss').ok, false);
+  assert.equal(c.tap, '👋', 'new people start with a wave');
+  assert.equal(rohit.snapshot().circles[0].tap, '👋');
+  // any one emoji, or one of the old names
+  assert.ok(rohit.setTap(c.id, 'hug').ok); assert.equal(c.tap, '🤗');
+  for (const bad of ['kiss', 'hello', '😘😘', 'a😘', '', null, 42, 'constructor', '‮😘', '😘́', '😘'.repeat(20)]) assert.equal(rohit.setTap(c.id, bad).ok, false, `refuses ${JSON.stringify(bad)}`);
+  for (const ok of ['😘', '👋🏽', '🇮🇳', '👨‍👩‍👧', ' 🌸 ']) assert.ok(rohit.setTap(c.id, ok).ok, `takes ${ok}`);
+  assert.equal(c.tap, '🌸');
+  assert.ok(rohit.setTap(c.id, '😘').ok);
   rohit.send({ circleId: c.id, text: null });
-  await until(() => amma.s.inbox.length === 1, 4000, 'gesture arrives');
-  assert.equal(amma.s.inbox[0].g, 'hug');
-  assert.equal(rohit.snapshot().sent[0].g, 'hug');
+  await until(() => amma.s.inbox.length === 1, 4000, 'kiss arrives');
+  assert.equal(amma.s.inbox[0].g, '😘');
+  assert.equal(rohit.snapshot().sent[0].g, '😘');
   amma.shown(amma.s.inbox[0].id);
-  assert.equal(amma.snapshot().received[0].g, 'hug');
+  assert.equal(amma.snapshot().received[0].g, '😘');
+  const reacted = new Promise(r => rohit.once('reaction', r));
   assert.equal(amma.react(amma.s.received[0].id, '😂').ok, true, 'the new reactions');
+  assert.equal((await reacted).g, '😘', 'the reaction knows what it was for');
+  // someone sending something odd as the emoji gets a heart, never their text
+  rohit._postCircle(c, { t: 'note', id: 'oddone01', text: null, g: 'heart', e: 'hi there', style: 'rose', at: rohit.now() });
+  await until(() => amma.s.inbox.length === 1, 4000, 'odd one arrives');
+  assert.equal(amma.s.inbox[0].g, '❤️');
+
+  // a 0.1.53 friend: hearts, hugs, waves and cheers come through as themselves, anything else as a heart
+  const inv3 = rohit.createInvite();
+  mid.joinCode(inv3.code);
+  await until(() => rohit.s.circles.length === 2 && mid.s.circles.length === 1, 5000, 'paired with 0.1.53');
+  const toMid = rohit.s.circles[1].id;
+  rohit.setTap(toMid, '🙌🏾'); rohit.send({ circleId: toMid, text: null });
+  await until(() => mid.s.inbox.length === 1, 4000, 'cheer reaches 0.1.53');
+  assert.equal(mid.s.inbox[0].g, 'cheer');
+  rohit.setTap(toMid, '😘'); rohit.send({ circleId: toMid, text: null });
+  await until(() => mid.s.inbox.length === 2, 4000, 'kiss reaches 0.1.53');
+  assert.equal(mid.s.inbox[1].g, 'heart');
+  mid.setTap(mid.s.circles[0].id, 'hug'); mid.send({ circleId: mid.s.circles[0].id, text: null });
+  await until(() => rohit.s.inbox.length === 1, 4000, 'hug from 0.1.53');
+  assert.equal(rohit.s.inbox[0].g, '🤗');
+
   // a 0.1.32 friend: what they send is a heart, and what we send them still lands (as a heart)
   const inv2 = rohit.createInvite();
   old.joinCode(inv2.code);
-  await until(() => rohit.s.circles.length === 2 && old.s.circles.length === 1, 5000, 'paired with old');
+  await until(() => rohit.s.circles.length === 3 && old.s.circles.length === 1, 5000, 'paired with old');
   old.send({ circleId: old.s.circles[0].id, text: null });
-  await until(() => rohit.s.inbox.length === 1, 4000, 'old heart arrives');
-  assert.equal(rohit.s.inbox[0].g, 'heart');
-  rohit.send({ circleId: rohit.s.circles[1].id, text: null });
+  await until(() => rohit.s.inbox.length === 2, 4000, 'old heart arrives');
+  assert.equal(rohit.s.inbox[1].g, '❤️');
+  rohit.send({ circleId: rohit.s.circles[2].id, text: null });
   await until(() => old.s.inbox.length === 1, 4000, 'our wave reaches 0.1.32');
   assert.equal(old.s.inbox[0].text, null);
 });
@@ -308,12 +338,19 @@ test('people paired before gestures keep their hearts, and untouched old default
   const f = path.join(dir, 'titli.json');
   const st = new Store(f); st.load();
   st.state.circles.push({ id: 'abcdefgh', kind: 'pair', v: 2, name: 'Suresh', secret: 'ab'.repeat(32), topic: 'titli_x', members: {}, createdAt: 1 });
+  // saved by 0.1.51 to 0.1.53, with the gesture names
+  st.state.circles.push({ id: 'bcdefghi', kind: 'pair', v: 2, name: 'Anu', secret: 'cd'.repeat(32), topic: 'titli_y', members: {}, tap: 'wave', createdAt: 1 });
+  st.state.inbox.push({ kind: 'note', id: 'waiting1', circleId: 'bcdefghi', from: 'someone1', fromName: 'Anu', text: null, g: 'hug', style: 'rose', at: 1 });
+  st.state.sent.push({ id: 'sentone1', circleId: 'bcdefghi', text: null, g: 'cheer', style: 'rose', at: 1, rc: {} });
   st.state.quick = ['Thinking of you', 'Saaptiya?', 'Drink some water 💧', 'Miss you already', 'Proud of you', 'Come home soon'];
   st.saveNow();
   const again = new Store(f); again.load();
   assert.ok(!again.state.quick.includes('Miss you already') && again.state.quick.includes('Reached home?'));
   const core = new TitliCore({ store: again, relay: new NtfyRelay({ server: 'http://127.0.0.1:9' }) });
-  assert.equal(core.s.circles[0].tap, 'heart');
+  assert.equal(core.s.circles[0].tap, '❤️');
+  assert.equal(core.s.circles[1].tap, '👋', 'the old names become their emoji');
+  assert.equal(core.nextDelivery().g, '🤗');
+  assert.equal(core.snapshot().sent[0].g, '🙌');
   // someone who edited their notes keeps them exactly
   const own = new Store(path.join(dir, 'own.json')); own.load(); own.state.quick = ['Miss you already', 'Lunch?']; own.saveNow();
   const ownAgain = new Store(path.join(dir, 'own.json')); ownAgain.load();

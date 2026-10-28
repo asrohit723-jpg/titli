@@ -8,6 +8,7 @@ const path = require('path');
 const { Store } = require('../core/store');
 const { NtfyRelay } = require('../core/relay');
 const { TitliCore } = require('../core/titli');
+const Taps = require('../core/taps');
 const presence = require('../core/presence');
 const { PresenceWatcher, helperPath } = require('./presence-watch');
 const { panelBounds } = require('./position');
@@ -142,8 +143,7 @@ function quickMenu() {
   } else {
     const send = text => () => notifySent(core.send({ circleId: to.id, text, style: snap.settings.style }), to.name);
     items.push({ label: `Send to ${to.name}`, enabled: false });
-    const GESTURE = { heart: '♥  A heart', hug: '🤗  A hug', wave: '👋  A wave', cheer: '🙌  A cheer' };
-    items.push({ label: GESTURE[to.tap] || GESTURE.heart, click: send(null) });
+    items.push({ label: `${to.tap}  ${Taps.label(to.tap) || 'One tap'}`, click: send(null) });
     // their own notes first, then the ones for everyone
     const notes = [...(snap.quickFor[to.id] || []), ...snap.quick.filter(q => !(snap.quickFor[to.id] || []).includes(q))];
     notes.forEach((q, i) => items.push({ label: q, accelerator: i < 9 ? String(i + 1) : undefined, click: send(q) }));
@@ -169,7 +169,8 @@ function createPanel() {
   });
   if (MAC) panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   panel.loadFile(path.join(__dirname, '../renderer/panel/index.html'));
-  panel.on('blur', () => { if (!panel.webContents.isDevToolsOpened()) { panel.hide(); hiddenAt = Date.now(); } });
+  panel.on('blur', () => { if (!panel.webContents.isDevToolsOpened() && Date.now() > pickingUntil) { panel.hide(); hiddenAt = Date.now(); } });
+  panel.on('focus', () => stopPicking());
   panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   panel.webContents.on('will-navigate', e => e.preventDefault());
 }
@@ -190,6 +191,18 @@ function showPanel() {
   panel.webContents.send('panel:opened');
   if (updater) updater.maybeCheck();
 }
+
+// the system emoji picker can take focus from the panel: keep the panel open while it's up (a minute at most)
+let pickingUntil = 0, pickTimer = null;
+function startPicking() {
+  if (!app.isEmojiPanelSupported()) return false;
+  pickingUntil = Date.now() + 60 * 1000;
+  clearTimeout(pickTimer);
+  pickTimer = setTimeout(() => { pickingUntil = 0; if (panel && panel.isVisible() && !panel.isFocused()) panel.hide(); }, 60 * 1000);
+  app.showEmojiPanel();
+  return true;
+}
+function stopPicking() { pickingUntil = 0; clearTimeout(pickTimer); }
 
 // clicking the icon while the panel is open first blurs (and hides) it; don't pop it straight back up
 let hiddenAt = 0;
@@ -241,7 +254,9 @@ function wireIpc() {
   });
   ipcMain.handle('panel:ui', (e, action, arg) => {
     if (!fromPanel(e)) return false;
-    if (action === 'hide') panel.hide();
+    if (action === 'hide') { stopPicking(); panel.hide(); }
+    else if (action === 'emojiPicker') return startPicking();
+    else if (action === 'emojiPicked') { const wasPicking = pickingUntil > 0; stopPicking(); if (wasPicking && panel.isVisible() && !panel.isFocused()) panel.focus(); }
     else if (action === 'quit') app.quit();
     else if (action === 'copy' && typeof arg === 'string' && arg.length < 4000) clipboard.writeText(arg);
     else if (action === 'copySecret' && typeof arg === 'string' && arg.length < 100) copySecret(arg);
@@ -281,8 +296,7 @@ function notifySent(r) {
 
 function wireNotifications() {
   core.on('reaction', ({ fromName, r, text, g }) => {
-    const what = { heart: 'your heart', hug: 'your hug', wave: 'your wave', cheer: 'your cheer' };
-    if (store.state.settings.notifyReactions) notify(`${fromName} reacted ${r}`, text ? `to “${text}”` : `to ${what[g] || what.heart}`);
+    if (store.state.settings.notifyReactions) notify(`${fromName} reacted ${r}`, text ? `to “${text}”` : `to your ${Taps.word(g) || g}`);
   });
   core.on('paired', ({ name }) => notify('Paired', `You and ${name} can send each other butterflies now.`));
   core.on('joined', ({ name, group }) => notify(group, `${name} joined the group.`));

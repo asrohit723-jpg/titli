@@ -355,7 +355,6 @@
   function applyStyle(key) {
     if (!STYLES[key]) key = 'rose';
     const st = STYLES[key], t = wingTextures(key);
-    document.documentElement.dataset.accent = key;   // the note's colour matches the butterfly that brought it
     foreMat.uniforms.uMap.value = t.fore; hindMat.uniforms.uMap.value = t.hind;
     [foreMat, hindMat].forEach(m => { m.uniforms.uIrid.value = st.irid; m.uniforms.uSpec.value = st.spec; m.uniforms.uUnder.value.set(st.under); });
     bodyMat.color.setHex(st.body);
@@ -628,8 +627,8 @@
      ====================================================================== */
   const bridge = window.overlay;
   const bubble = $('#bubble');
-  // a note with no words: the gesture they picked for you
-  const GLYPH = { heart: '♥', hug: '🤗', wave: '👋', cheer: '🙌' };
+  // a note with no words: the emoji they picked for you (a heart is drawn as ♥)
+  const glyphOf = g => window.Taps.isHeart(g) ? '♥' : (window.Taps.emojiOf(g) || '♥');
   let current = null, flowGen = 0, autoTimer = null, interactive = false;
   const NOTE_STAYS_MS = 10 * 60 * 1000, VISIT_STAYS_MS = 6000;
 
@@ -706,7 +705,7 @@
     const note = $('#bNote');
     note.classList.toggle('b-heart', !visit && !item.text);
     note.classList.toggle('b-visit', visit);
-    note.textContent = visit ? 'sent a butterfly back 🦋' : (item.text || GLYPH[item.g] || GLYPH.heart);
+    note.textContent = visit ? 'sent a butterfly back 🦋' : (item.text || glyphOf(item.g));
     $('#bReact').hidden = visit;
     bubble.setAttribute('aria-label', visit ? `${item.fromName} sent a butterfly back` : `Note from ${item.fromName}`);
     bubble.hidden = false; placeOverlays();

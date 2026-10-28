@@ -21,6 +21,7 @@ const { EventEmitter } = require('events');
 const codes = require('./codes');
 const { seal, open } = require('./seal');
 const identity = require('./identity');
+const Taps = require('./taps');
 
 const MAX_TEXT = 60, MAX_NAME = 24, MAX_QUICK = 12, MAX_PERSONAL = 8, MAX_SENT = 40, MAX_RECEIVED = 100, MAX_HANDLED = 800, MAX_INBOX = 50, MAX_INVITES = 5;
 const MAX_MEMBERS = 30;
@@ -34,8 +35,9 @@ const STYLES = ['rose', 'peony', 'gold', 'midnight', 'sky', 'leaf', 'monarch'];
 // what the reaction row offers; older versions also send 🥰 and 😘, which still count
 const REACTIONS = ['❤️', '😂', '🤗', '👍', '😊', 'butterfly'];
 const REACTIONS_IN = [...REACTIONS, '🥰', '😘'];
-// the one-tap butterfly (no words): each person or group gets their own, a heart for some, a wave for others
-const GESTURES = ['heart', 'hug', 'wave', 'cheer'];
+// the one-tap butterfly (no words): any emoji, picked for each person or group (a heart for some, a wave for others)
+const GESTURES = Object.keys(Taps.NAMES);   // the four names Titli 0.1.51 to 0.1.53 understand
+const tapOf = x => Taps.emojiOf(x) || Taps.HEART;
 const RANK = { sending: 0, sent: 1, arrived: 2, seen: 3 };
 const ANNOUNCE = ['hello', 'hi', 'upgrade'];   // messages that introduce the sender's keys
 
@@ -59,8 +61,9 @@ class TitliCore extends EventEmitter {
     if (!identity.validIdentity(this.me.keys)) { this.me.keys = identity.newIdentity(); this.store.save(); }
     if (!relayOk(this.s.settings.relay)) this.s.settings.relay = 'https://ntfy.sh';
     if (typeof this.s.settings.sendReceipts !== 'boolean') this.s.settings.sendReceipts = true;
-    // people paired before gestures existed keep getting hearts
-    for (const c of this.s.circles) if (!GESTURES.includes(c.tap)) c.tap = 'heart';
+    // people paired before gestures existed keep getting hearts; the old names become their emoji
+    for (const c of this.s.circles) c.tap = tapOf(c.tap);
+    for (const it of this.s.inbox) if (it.g != null) it.g = tapOf(it.g);
     // circles saved by older versions don't list our keys in our own entry
     for (const c of this.s.circles) if (c.members && c.members[this.me.id]) c.members[this.me.id] = { ...c.members[this.me.id], ...this._pub };
     this._handled = new Set(this.s.handled);
@@ -120,12 +123,13 @@ class TitliCore extends EventEmitter {
     return { ok: true };
   }
 
-  // what one tap sends to this person or group
-  setTap(circleId, gesture) {
+  // what one tap sends to this person or group: any one emoji
+  setTap(circleId, tap) {
     const c = this._circle(circleId);
     if (!c) return { ok: false, error: 'That person or group is gone.' };
-    if (!GESTURES.includes(gesture)) return { ok: false };
-    c.tap = gesture; this._save();
+    const e = Taps.emojiOf(tap);
+    if (!e) return { ok: false, error: 'Pick one emoji.' };
+    c.tap = e; this._save();
     return { ok: true };
   }
 
@@ -224,7 +228,7 @@ class TitliCore extends EventEmitter {
     const topic = codes.topicFor(Buffer.from(secret, 'hex'));
     const existing = this.s.circles.find(c => c.topic === topic);
     if (existing) return { ok: false, error: `You're already in ${existing.name}.` };
-    const c = { id: codes.newId(), kind: 'group', v: 1, name: 'New group', nameUnknown: true, code: p.code, secret, topic, members: { [this.me.id]: this._meMember() }, tap: 'wave', createdAt: this.now(), since: this._nowSec() - 5 };
+    const c = { id: codes.newId(), kind: 'group', v: 1, name: 'New group', nameUnknown: true, code: p.code, secret, topic, members: { [this.me.id]: this._meMember() }, tap: '👋', createdAt: this.now(), since: this._nowSec() - 5 };
     this.s.circles.push(c);
     this._syncTopics(); this._save();
     this._postCircle(c, { t: 'hello', ...this._pub });
@@ -236,7 +240,7 @@ class TitliCore extends EventEmitter {
     if (!n) return { ok: false, error: 'Give the group a name first.' };
     if (this.s.circles.some(c => c.kind === 'group' && c.name.toLowerCase() === n.toLowerCase())) return { ok: false, error: 'You already have a group with that name.' };
     const secret = codes.newSecret();
-    const c = { id: codes.newId(), kind: 'group', v: 2, epoch: 0, name: n, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember() }, owner: this.me.id, tap: 'wave', createdAt: this.now(), since: this._nowSec() - 5 };
+    const c = { id: codes.newId(), kind: 'group', v: 2, epoch: 0, name: n, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember() }, owner: this.me.id, tap: '👋', createdAt: this.now(), since: this._nowSec() - 5 };
     this.s.circles.push(c);
     this._syncTopics(); this._save();
     const inv = this.createGroupInvite(c.id);
@@ -281,8 +285,9 @@ class TitliCore extends EventEmitter {
     const others = Object.keys(c.members).filter(id => id !== this.me.id);
     if (!others.length) return { ok: false, error: c.kind === 'group' ? `No one has joined ${c.name} yet. Share its code first.` : 'They haven’t joined yet.' };
     const t = text == null ? null : (clip(text, MAX_TEXT) || null);
-    const g = t == null ? (GESTURES.includes(gesture) ? gesture : c.tap || 'heart') : undefined;
-    const msg = { t: 'note', id: codes.newId(), text: t, g, style: STYLES.includes(style) ? style : this.s.settings.style, at: this.now() };
+    const g = t == null ? (Taps.emojiOf(gesture) || tapOf(c.tap)) : undefined;
+    // e: the emoji; g: the nearest of the four names, for anyone still on 0.1.51 to 0.1.53 (older ones show a heart)
+    const msg = { t: 'note', id: codes.newId(), text: t, g: g && Taps.legacyName(g), e: g, style: STYLES.includes(style) ? style : this.s.settings.style, at: this.now() };
     const rec = { id: msg.id, circleId: c.id, text: t, g, style: msg.style, at: msg.at, rc: {} };
     for (const id of others) rec.rc[id] = { st: 'sending', react: null };
     this.s.sent.unshift(rec);
@@ -342,7 +347,7 @@ class TitliCore extends EventEmitter {
         members: os.map(([id, m]) => label(id, m)),
         people: os.map(([id, m]) => ({ id, name: label(id, m) })),
         code: gc ? gc.code : undefined, codeExpiresAt: gc ? gc.expiresAt : undefined, legacyCode: c.kind === 'group' && c.v !== 2,
-        owner: c.owner === me.id, createdAt: c.createdAt || null, tap: c.tap || 'heart',
+        owner: c.owner === me.id, createdAt: c.createdAt || null, tap: tapOf(c.tap),
         // fully protected: the new key exchange is done and we know everyone's signing key
         secure: c.v === 2 && os.every(([, m]) => identity.isKey(m.pub)),
         safety: identity.safetyCode(c.secret, c.kind === 'group' ? `group|${c.id}|${c.epoch || 0}` : 'pair')
@@ -358,8 +363,8 @@ class TitliCore extends EventEmitter {
       joining: this.s.joining.map(j => ({ code: j.code, kind: j.kind, createdAt: j.createdAt })),
       quick: this.s.quick.slice(),
       quickFor: Object.fromEntries(Object.entries(this.s.quickFor || {}).filter(([id, l]) => this._circle(id) && Array.isArray(l) && l.length).map(([id, l]) => [id, l.slice()])),
-      sent: this.s.sent.slice(0, 20).map(m => ({ id: m.id, circleId: m.circleId, text: m.text, g: m.text == null ? m.g || 'heart' : undefined, at: m.at, to: nameOf(m.circleId), status: this._statusOf(m) })),
-      received: this.s.received.filter(r => !r.preview).slice(0, 20).map(r => ({ id: r.id, kind: r.kind, circleId: r.circleId, text: r.text, g: r.text == null ? r.g || 'heart' : undefined, fromName: r.fromName, circleName: r.circleName, at: r.at, react: r.react || null })),
+      sent: this.s.sent.slice(0, 20).map(m => ({ id: m.id, circleId: m.circleId, text: m.text, g: m.text == null ? tapOf(m.g) : undefined, at: m.at, to: nameOf(m.circleId), status: this._statusOf(m) })),
+      received: this.s.received.filter(r => !r.preview).slice(0, 20).map(r => ({ id: r.id, kind: r.kind, circleId: r.circleId, text: r.text, g: r.text == null ? tapOf(r.g) : undefined, fromName: r.fromName, circleName: r.circleName, at: r.at, react: r.react || null })),
       inboxCount: this.s.inbox.length,
       lastTo: this.s.lastTo
     };
@@ -463,7 +468,7 @@ class TitliCore extends EventEmitter {
         secret = codes.newSecret();
         them = { name };
       }
-      c = { id: codes.newId(), kind: 'pair', v: v2 ? 2 : 1, name, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: them }, tap: 'wave', createdAt: this.now(), since: this._nowSec() - 5 };
+      c = { id: codes.newId(), kind: 'pair', v: v2 ? 2 : 1, name, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: them }, tap: '👋', createdAt: this.now(), since: this._nowSec() - 5 };
       this.s.circles.push(c);
       inv.circleId = c.id; inv.usedAt = this.now();
       this.s.lastTo = this.s.lastTo || c.id;
@@ -487,11 +492,11 @@ class TitliCore extends EventEmitter {
     if (msg.v === 2) {
       if (msg.joinEph !== j.eph.pub || !identity.isKey(msg.eph) || !identity.isKey(msg.xpub) || !this._selfSigned(msg, topic) || !msg.circle || !isId(msg.circle.id)) return;
       const secret = identity.kdf(identity.dh(j.eph.priv, msg.eph), sec, `titli-pair-v2|${msg.eph}|${j.eph.pub}`).toString('hex');
-      c = { id: msg.circle.id, kind: 'pair', v: 2, name, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: { name, pub: msg.pub, xpub: msg.xpub } }, tap: 'wave', createdAt: this.now(), since: (time || this._nowSec()) - 10 };
+      c = { id: msg.circle.id, kind: 'pair', v: 2, name, secret, topic: codes.topicFor(Buffer.from(secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: { name, pub: msg.pub, xpub: msg.xpub } }, tap: '👋', createdAt: this.now(), since: (time || this._nowSec()) - 10 };
     } else {
       // made on Titli 0.1.32 or earlier: take its key now and upgrade the pair when they update
       if (!msg.circle || !isId(msg.circle.id) || !isHex64(msg.circle.secret)) return;
-      c = { id: msg.circle.id, kind: 'pair', v: 1, name, secret: msg.circle.secret, topic: codes.topicFor(Buffer.from(msg.circle.secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: { name } }, tap: 'wave', createdAt: this.now(), since: (time || this._nowSec()) - 10 };
+      c = { id: msg.circle.id, kind: 'pair', v: 1, name, secret: msg.circle.secret, topic: codes.topicFor(Buffer.from(msg.circle.secret, 'hex')), members: { [this.me.id]: this._meMember(), [msg.from]: { name } }, tap: '👋', createdAt: this.now(), since: (time || this._nowSec()) - 10 };
     }
     this.s.joining = this.s.joining.filter(x => x !== j);
     if (this._circle(c.id)) { this._syncTopics(); return; }
@@ -543,7 +548,7 @@ class TitliCore extends EventEmitter {
     if (!members[msg.from] || members[msg.from].pub !== msg.pub) return;   // whoever answered must be in the group they describe
     members[this.me.id] = this._meMember();
     const c = { id: g.id, kind: 'group', v: 2, epoch: Number.isInteger(g.epoch) && g.epoch >= 0 ? g.epoch : 0, name: clip(g.name, MAX_NAME) || 'Group', secret: box.secret,
-      topic: codes.topicFor(Buffer.from(box.secret, 'hex')), owner: isId(g.owner) ? g.owner : msg.from, members, joinedWith: j.raw, tap: 'wave', createdAt: this.now(), since: (time || this._nowSec()) - 10 };
+      topic: codes.topicFor(Buffer.from(box.secret, 'hex')), owner: isId(g.owner) ? g.owner : msg.from, members, joinedWith: j.raw, tap: '👋', createdAt: this.now(), since: (time || this._nowSec()) - 10 };
     this.s.joining = this.s.joining.filter(x => x !== j);
     this.s.circles.push(c);
     this.s.lastTo = this.s.lastTo || c.id;
@@ -584,7 +589,7 @@ class TitliCore extends EventEmitter {
         const item = {
           kind: 'note', id: msg.id, circleId: c.id, from: msg.from, fromName,
           circleName: c.kind === 'group' ? c.name : null, text: msg.text == null ? null : clip(msg.text, 80) || null,
-          g: msg.text == null ? (GESTURES.includes(msg.g) ? msg.g : 'heart') : undefined,
+          g: msg.text == null ? (Taps.emojiOf(msg.e) || tapOf(msg.g)) : undefined,
           // when the relay got it, not when the sender says it was sent
           style: STYLES.includes(msg.style) ? msg.style : 'rose', at: time ? time * 1000 : this.now()
         };
@@ -604,10 +609,10 @@ class TitliCore extends EventEmitter {
         if (msg.t === 'react' && REACTIONS_IN.includes(msg.r) && !rc.react) {
           rc.react = msg.r;
           if (msg.r === 'butterfly') {
-            this.s.inbox.push({ kind: 'visit', id: `v-${rec.id}-${msg.from}`.slice(0, 60), circleId: c.id, from: msg.from, fromName, circleName: c.kind === 'group' ? c.name : null, text: rec.text, g: rec.g, style: rec.style, at: this.now() });
+            this.s.inbox.push({ kind: 'visit', id: `v-${rec.id}-${msg.from}`.slice(0, 60), circleId: c.id, from: msg.from, fromName, circleName: c.kind === 'group' ? c.name : null, text: rec.text, g: rec.text == null ? tapOf(rec.g) : undefined, style: rec.style, at: this.now() });
             this.emit('inbox');
           } else {
-            this.emit('reaction', { fromName, r: msg.r, text: rec.text, g: rec.g || 'heart' });
+            this.emit('reaction', { fromName, r: msg.r, text: rec.text, g: tapOf(rec.g) });
           }
         }
         break;
