@@ -90,6 +90,8 @@ app.whenReady().then(() => {
   if (!store.state.me.name && !TEST_UPDATE && !TEST_PANEL) setTimeout(showPanel, 600); // first run: say hello
   if (TEST_PANEL) setTimeout(() => {
     showPanel();
+    const b = panel.getBounds();
+    console.log(`[titli] panel shown at ${b.x},${b.y},${b.width},${b.height}`);
     const report = when => console.log(`[titli] panel ${when}: visible=${panel.isVisible()} focused=${panel.isFocused()} window=${MAC && !PANEL_CLASSIC ? 'panel' : 'normal'}`);
     setTimeout(() => report('after 1s'), 1000);
     setTimeout(() => report('after 4s'), 4000);

@@ -38,20 +38,32 @@ jobs:
             screencapture -x "shots/$variant-0-fullscreen-app.png" || true
             if [ "$variant" = classic ]; then extra="TITLI_PANEL_CLASSIC=1"; else extra="TITLI_PANEL_CLASSIC=0"; fi
             env TITLI_TEST_PANEL=1 $extra "$app/Contents/MacOS/Titli" > "titli-$variant.log" 2>&1 & tp=$!
-            sleep 5;  screencapture -x "shots/$variant-1-panel-after-1s.png" || true
-            sleep 3;  screencapture -x "shots/$variant-2-panel-after-4s.png" || true
+            for i in $(seq 1 40); do grep -q 'panel shown at' "titli-$variant.log" && break; sleep 0.25; done
+            x=0; y=0; w=372; h=640
+            read -r x y w h < <(grep 'panel shown at' "titli-$variant.log" | sed -E 's/.*at ([-0-9]+),([-0-9]+),([0-9]+),([0-9]+).*/\1 \2 \3 \4/') || true
+            # what colour is on screen where the panel should be: the full-screen app is navy (29,53,87)
+            look() {
+              screencapture -x -R "$((x + w / 4)),$((y + h / 3)),$((w / 2)),$((h / 3))" "shots/$variant-$1.png" 2>/dev/null || { echo "no capture"; return; }
+              sips -s format bmp -z 1 1 "shots/$variant-$1.png" --out "px-$variant-$1.bmp" >/dev/null 2>&1
+              python3 -c 'import sys,struct;d=open(sys.argv[1],"rb").read();o=struct.unpack("<I",d[10:14])[0];b,g,r=d[o],d[o+1],d[o+2];n=abs(r-29)+abs(g-53)+abs(b-87)<40;print(f"rgb({r},{g},{b})"+(" = the full-screen app: NO PANEL" if n else " = panel on screen"))' "px-$variant-$1.bmp"
+            }
+            sleep 1; c1="$(look after-1s)"
+            sleep 3; c4="$(look after-4s)"
+            echo "$variant: on screen after 1s: $c1; after 4s: $c4" >> seen.txt
             wait $tp || true
             kill $hp 2>/dev/null || true; sleep 2
             t="$(grep '\[titli\] panel' "titli-$variant.log" | tr '\n' ' ')"
             h="$(grep 'fullScreen=' "helper-$variant.log" | tail -1)"
             echo "${variant}: ${t} | helper at the end: ${h}" >> results.txt
           done
-          cat results.txt
+          cat results.txt seen.txt > summary.txt
+          cat summary.txt
           ok=$(grep '^panel:' results.txt | grep 'after 4s: visible=true' | grep -c 'fullScreen=true' || true)
-          if [ "$ok" = 1 ]; then
-            note notice "$(sw_vers -productVersion): the panel opens over a full-screen app and stays open%0A$(cat results.txt)"
+          onscreen=$(grep '^panel:' seen.txt | grep -c 'after 4s: rgb([0-9,]*) = panel on screen' || true)
+          if [ "$ok" = 1 ] && [ "$onscreen" = 1 ]; then
+            note notice "$(sw_vers -productVersion): the panel opens over a full-screen app and stays open%0A$(cat summary.txt)"
           else
-            note error "$(sw_vers -productVersion): panel check failed%0A$(cat results.txt)"; exit 1
+            note error "$(sw_vers -productVersion): panel check failed%0A$(cat summary.txt)"; exit 1
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
