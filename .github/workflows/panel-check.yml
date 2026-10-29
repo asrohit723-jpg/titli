@@ -35,7 +35,8 @@ jobs:
             pkill -f 'Titli.app/Contents' 2>/dev/null || true
             npx electron scripts/ci-fullscreen-app.js > "helper-$variant.log" 2>&1 & hp=$!
             sleep 8
-            screencapture -x "shots/$variant-0-fullscreen-app.png" || true
+            screencapture -x -R 600,200,186,213 "shots/$variant-0-base.png" 2>/dev/null && sips -s format bmp -z 1 1 "shots/$variant-0-base.png" --out "px-$variant-base.bmp" >/dev/null 2>&1 \
+              && base="$(python3 -c 'import sys,struct;d=open(sys.argv[1],"rb").read();o=struct.unpack("<I",d[10:14])[0];print(f"rgb({d[o+2]},{d[o+1]},{d[o]})")' "px-$variant-base.bmp")" || base="no capture"
             if [ "$variant" = classic ]; then extra="TITLI_PANEL_CLASSIC=1"; else extra="TITLI_PANEL_CLASSIC=0"; fi
             env TITLI_TEST_PANEL=1 $extra "$app/Contents/MacOS/Titli" > "titli-$variant.log" 2>&1 & tp=$!
             for i in $(seq 1 40); do grep -q 'panel shown at' "titli-$variant.log" && break; sleep 0.25; done
@@ -49,7 +50,7 @@ jobs:
             }
             sleep 1; c1="$(look after-1s)"
             sleep 3; c4="$(look after-4s)"
-            echo "$variant: on screen after 1s: $c1; after 4s: $c4" >> seen.txt
+            echo "$variant: only the full-screen app: $base; on screen after 1s: $c1; after 4s: $c4" >> seen.txt
             wait $tp || true
             kill $hp 2>/dev/null || true; sleep 2
             t="$(grep '\[titli\] panel' "titli-$variant.log" | tr '\n' ' ')"
