@@ -1,0 +1,58 @@
+name: Panel check
+
+# On real Macs: another app goes full screen, then Titli opens its panel from the menu bar.
+# The panel has to appear on top and stay open (it used to flash and close). Screenshots are kept as artifacts.
+# "classic" opens it as an ordinary window (how Titli did it before), "panel" as a macOS panel (how it does now).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fullscreen:
+    strategy:
+      fail-fast: false
+      matrix: { os: [macos-14, macos-15] }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 20, cache: npm }
+      - run: npm ci && npm run build:helper
+      - name: Build Titli
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --mac --arm64 --dir --publish never > build.log 2>&1 || { tail -40 build.log; exit 1; }
+          ls -d dist/mac*/Titli.app
+      - name: Open the panel over a full-screen app
+        run: |
+          note() { msg="$(printf '%s' "$2" | tail -n 40 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; echo "::$1::$msg"; }
+          app="$(ls -d "$PWD"/dist/mac*/Titli.app | head -1)"
+          mkdir -p shots
+          for variant in classic panel; do
+            pkill -f 'Titli.app/Contents' 2>/dev/null || true
+            npx electron scripts/ci-fullscreen-app.js > "helper-$variant.log" 2>&1 & hp=$!
+            sleep 8
+            screencapture -x "shots/$variant-0-fullscreen-app.png" || true
+            if [ "$variant" = classic ]; then extra="TITLI_PANEL_CLASSIC=1"; else extra="TITLI_PANEL_CLASSIC=0"; fi
+            env TITLI_TEST_PANEL=1 $extra "$app/Contents/MacOS/Titli" > "titli-$variant.log" 2>&1 & tp=$!
+            sleep 5;  screencapture -x "shots/$variant-1-panel-after-1s.png" || true
+            sleep 3;  screencapture -x "shots/$variant-2-panel-after-4s.png" || true
+            wait $tp || true
+            kill $hp 2>/dev/null || true; sleep 2
+            t="$(grep '\[titli\] panel' "titli-$variant.log" | tr '\n' ' ')"
+            h="$(grep 'fullScreen=' "helper-$variant.log" | tail -1)"
+            echo "${variant}: ${t} | helper at the end: ${h}" >> results.txt
+          done
+          cat results.txt
+          ok=$(grep '^panel:' results.txt | grep 'after 4s: visible=true' | grep -c 'fullScreen=true' || true)
+          if [ "$ok" = 1 ]; then
+            note notice "$(sw_vers -productVersion): the panel opens over a full-screen app and stays open%0A$(cat results.txt)"
+          else
+            note error "$(sw_vers -productVersion): panel check failed%0A$(cat results.txt)"; exit 1
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with: { name: 'panel-${{ matrix.os }}', path: 'shots/' }

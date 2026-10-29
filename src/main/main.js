@@ -34,6 +34,9 @@ if (WIN) app.setAppUserModelId('app.titli.mac'); // matches the installer's shor
 let tray = null, panel = null, overlay = null, core = null, watcher = null, delivery = null, store = null, updater = null;
 // TITLI_TEST_UPDATE=1: CI starts an older build, which updates itself straight away and logs to stdout
 const TEST_UPDATE = process.env.TITLI_TEST_UPDATE === '1';
+// TITLI_TEST_PANEL=1: CI opens the panel over another app's full-screen window and checks it stays open;
+// TITLI_PANEL_CLASSIC=1 there opens it as an ordinary window instead, to compare
+const TEST_PANEL = process.env.TITLI_TEST_PANEL === '1', PANEL_CLASSIC = process.env.TITLI_PANEL_CLASSIC === '1';
 const log = (...a) => { if (DEV || TEST_UPDATE) console.log('[titli]', ...a); };
 
 app.on('second-instance', () => showPanel());
@@ -84,7 +87,14 @@ app.whenReady().then(() => {
     return;
   }
   if (store.unlockFailed) setTimeout(() => notify('Titli started fresh', 'Pair again with your people to keep sending butterflies.'), 1500);
-  if (!store.state.me.name && !TEST_UPDATE) setTimeout(showPanel, 600); // first run: say hello
+  if (!store.state.me.name && !TEST_UPDATE && !TEST_PANEL) setTimeout(showPanel, 600); // first run: say hello
+  if (TEST_PANEL) setTimeout(() => {
+    showPanel();
+    const report = when => console.log(`[titli] panel ${when}: visible=${panel.isVisible()} focused=${panel.isFocused()} window=${MAC && !PANEL_CLASSIC ? 'panel' : 'normal'}`);
+    setTimeout(() => report('after 1s'), 1000);
+    setTimeout(() => report('after 4s'), 4000);
+    setTimeout(() => app.exit(0), 7000);
+  }, 3000);
   if (TEST_UPDATE) updater.check({ manual: true }).then(() => { log('test update: status', updater.state.status, updater.state.latest); return updater.update(); }).then(r => log('test update: result', JSON.stringify(r), updater.state.errorDetail || ''));
   if (process.env.TITLI_SMOKE) global.__titli = { panel, overlay, core, delivery, watcher, updater, showPanel, preview, store };
 });
@@ -152,11 +162,23 @@ function createPanel() {
     width: PANEL_W, height: PANEL_H, show: false, frame: false, resizable: false, movable: false,
     minimizable: false, maximizable: false, fullscreenable: false, skipTaskbar: true, alwaysOnTop: true,
     transparent: true, backgroundColor: '#00000000', hasShadow: MAC, roundedCorners: true,
+    // Mac: a panel floats over full-screen apps (and on every desktop) without pulling you out of them.
+    // A normal window there gets shown, then macOS hands focus back to the full-screen app and it closes again.
+    ...(MAC && !PANEL_CLASSIC ? { type: 'panel' } : {}),
     webPreferences: { preload: path.join(__dirname, '../preload/panel.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
-  if (MAC) panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  if (MAC) panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   panel.loadFile(path.join(__dirname, '../renderer/panel/index.html'));
-  panel.on('blur', () => { if (!panel.webContents.isDevToolsOpened() && Date.now() > pickingUntil) { panel.hide(); hiddenAt = Date.now(); } });
+  panel.on('blur', () => {
+    if (panel.webContents.isDevToolsOpened() || Date.now() <= pickingUntil) return;
+    // macOS can take focus away for a moment as the panel appears (over a full-screen app, while the menu bar slides
+    // away): give it a beat, and only close if focus really went somewhere else
+    setTimeout(() => {
+      if (!panel.isVisible() || panel.isFocused() || Date.now() <= pickingUntil) return;
+      if (Date.now() - shownAt < 700) { panel.focus(); return; }
+      panel.hide(); hiddenAt = Date.now();
+    }, 150);
+  });
   panel.on('focus', () => stopPicking());
   panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   panel.webContents.on('will-navigate', e => e.preventDefault());
@@ -171,9 +193,11 @@ function positionPanel() {
   panel.setBounds(panelBounds({ tray: hasTray ? tb : null, work: display.workArea, width: PANEL_W, height: PANEL_H, platform: process.platform }));
 }
 
+let shownAt = 0;
 function showPanel() {
   if (!panel) return;
   positionPanel();
+  shownAt = Date.now();
   panel.show();
   panel.focus();
   panel.webContents.send('panel:opened');
