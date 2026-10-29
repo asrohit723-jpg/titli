@@ -172,6 +172,7 @@ function createPanel() {
   if (MAC) panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   panel.loadFile(path.join(__dirname, '../renderer/panel/index.html'));
   panel.on('blur', () => {
+    blurredAt = Date.now();
     if (panel.webContents.isDevToolsOpened() || Date.now() <= pickingUntil) return;
     // macOS can take focus away for a moment as the panel appears (over a full-screen app, while the menu bar slides
     // away): give it a beat, and only close if focus really went somewhere else
@@ -219,10 +220,14 @@ function startPicking() {
 function stopPicking() { pickingUntil = 0; clearTimeout(pickTimer); }
 
 // clicking the icon while the panel is open first blurs (and hides) it; don't pop it straight back up
-let hiddenAt = 0;
+let hiddenAt = 0, blurredAt = 0;
 function togglePanel() {
-  if (panel && panel.isVisible()) panel.hide();
-  else if (Date.now() - hiddenAt > 300) showPanel();
+  if (panel && panel.isVisible()) {
+    // open but not in front, and not because this very click took focus (e.g. left behind on another desktop or
+    // behind a full-screen app): bring it here instead of closing it
+    if (!panel.isFocused() && Date.now() - blurredAt > 1000) return showPanel();
+    panel.hide();
+  } else if (Date.now() - hiddenAt > 300) showPanel();
 }
 
 /* ---------------- talking to the panel ---------------- */
