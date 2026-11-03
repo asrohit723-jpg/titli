@@ -29,7 +29,8 @@ jobs:
           }
           "@
           [Mouse]::SetProcessDPIAware() | Out-Null
-          $electron = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          $electron = (node -e "process.stdout.write(require('electron'))")
+          Write-Output "Electron: $electron (exists: $(Test-Path $electron))"
           $results = @()
           foreach ($mode in @('classic', 'current')) {
             foreach ($scale in @('1', '1.5')) {
