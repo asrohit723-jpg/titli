@@ -630,7 +630,12 @@
   // a note with no words: the emoji they picked for you (a heart is drawn as ♥)
   const glyphOf = g => window.Taps.isHeart(g) ? '♥' : (window.Taps.emojiOf(g) || '♥');
   let current = null, flowGen = 0, autoTimer = null, interactive = false;
-  const NOTE_STAYS_MS = 10 * 60 * 1000, VISIT_STAYS_MS = 6000;
+  // a note stays two minutes (longer while you're pointing at it); "a butterfly back" just a few seconds
+  const NOTE_STAYS_MS = 2 * 60 * 1000, VISIT_STAYS_MS = 6000, HOVER_KEEPS_MS = 15000;
+  let stayUntil = 0, hovering = false;
+  // generous places to click: a little around the note, and well around the butterfly
+  const NOTE_PAD = 14;
+  const bflyReach = () => Math.max(S * 2.4, 38);
 
   const tell = ev => bridge.send(ev);
   function setInteractive(on) { if (on !== interactive) { interactive = on; tell({ type: 'interactive', on }); } }
@@ -660,14 +665,20 @@
     nextShift = performance.now() / 1000 + rand(10, 16);
     showBubble(item);
     tell({ type: 'shown', id: item.id });
-    autoTimer = setTimeout(() => { if (alive() && state === 'reading') leave(null); }, item.kind === 'visit' ? VISIT_STAYS_MS : NOTE_STAYS_MS);
+    stayUntil = Date.now() + (item.kind === 'visit' ? VISIT_STAYS_MS : NOTE_STAYS_MS);
+    clearInterval(autoTimer);
+    autoTimer = setInterval(() => {
+      if (!alive() || state !== 'reading') return;
+      if (hovering) stayUntil = Math.max(stayUntil, Date.now() + HOVER_KEEPS_MS);
+      if (Date.now() >= stayUntil) leave(null);
+    }, 500);
   }
 
   async function leave(kind) {
     if (state !== 'reading' || !current) return;
     const gen = ++flowGen, alive = () => gen === flowGen;
     const item = current;
-    state = 'leaving'; clearTimeout(autoTimer); nextShift = 0;
+    state = 'leaving'; clearInterval(autoTimer); hovering = false; nextShift = 0;
     if (kind) tell({ type: 'react', id: item.id, r: kind });
     if (kind && kind !== 'butterfly') { floatEmoji(kind); lastFlutter = 0; flutter(2.6, .9); }
     await wait(kind && kind !== 'butterfly' ? 900 : 250); if (!alive()) return;
@@ -692,7 +703,7 @@
   function abort() {
     if (!current) return;
     const id = current.id;
-    flowGen++; tweens.clear(); clearTimeout(autoTimer);
+    flowGen++; tweens.clear(); clearInterval(autoTimer); hovering = false;
     nextShift = 0;
     bubble.classList.remove('show'); bubble.hidden = true; setInteractive(false);
     finish('aborted', id);
@@ -737,20 +748,51 @@
     ], { duration: reduce ? 1 : 1300, easing: 'ease-out' }).onfinish = () => h.remove();
   }
 
-  bubble.querySelectorAll('.b-emo').forEach(b => b.addEventListener('click', () => leave(b.dataset.r)));
-  $('#backBtn').addEventListener('click', () => leave('butterfly'));
-  $('#closeBtn').addEventListener('click', () => leave(null));
+  bubble.querySelectorAll('.b-emo').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); leave(b.dataset.r); }));
+  $('#backBtn').addEventListener('click', e => { e.stopPropagation(); leave('butterfly'); });
 
-  // clicks pass straight through to your apps, except on the note and the butterfly itself
-  document.addEventListener('mousemove', e => {
-    if (!current) { setInteractive(false); return; }
-    let over = false;
-    if (!bubble.hidden) { const r = bubble.getBoundingClientRect(); over = e.clientX >= r.left - 4 && e.clientX <= r.right + 4 && e.clientY >= r.top - 8 && e.clientY <= r.bottom + 4; }
-    const px = worldToPx(bfly.position);
-    const nearBfly = Math.hypot(e.clientX - px.x, e.clientY - px.y) < S * 1.4;
-    if (nearBfly && state === 'reading') flutter(2.6, 1);
-    setInteractive(over || (nearBfly && state === 'reading'));
+  /* ---------- where clicks belong ----------
+     Everywhere else, clicks pass straight through to your apps. The note and the butterfly take them, with room to
+     spare: main checks the pointer against these areas itself (forwarded mouse moves are unreliable on Windows,
+     above all with display scaling), so this page only says where they are. */
+  const noteOpen = () => !!current && !bubble.hidden && bubble.classList.contains('show');
+  function noteArea() {
+    const r = bubble.getBoundingClientRect();
+    return { x: r.left - NOTE_PAD, y: r.top - NOTE_PAD, w: r.width + NOTE_PAD * 2, h: r.height + NOTE_PAD * 2 };
+  }
+  const inArea = (a, x, y) => !!a && x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h;
+  const nearButterfly = (x, y) => { const p = worldToPx(bfly.position); return Math.hypot(x - p.x, y - p.y) <= bflyReach(); };
+  const centre = el => { const r = el.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; };
+  let lastAreas = '';
+  function reportAreas() {
+    const note = noteOpen() ? noteArea() : null;
+    let bf = null;
+    if (current && state === 'reading') { const p = worldToPx(bfly.position); bf = { x: p.x, y: p.y, r: bflyReach() }; }
+    const round = o => o && Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
+    const msg = { type: 'areas', note: round(note), bfly: round(bf) };
+    // where the close button and a reaction are (main only uses these in its self-test)
+    if (note) msg.marks = { close: centre($('#closeBtn')), note: centre($('#bNote')), react: centre(bubble.querySelector('.b-emo')) };
+    const key = JSON.stringify(msg);
+    if (key !== lastAreas) { lastAreas = key; tell(msg); }
+  }
+  setInterval(reportAreas, 100);
+
+  // a click on the note, its ✕ or just around it closes it; a click on or near the butterfly opens the note
+  document.addEventListener('click', e => {
+    if (!current || state !== 'reading') return;
+    if (noteOpen() && inArea(noteArea(), e.clientX, e.clientY)) { leave(null); return; }
+    if (nearButterfly(e.clientX, e.clientY)) { if (!noteOpen()) showBubble(current); else flutter(2.6, .8); }
   });
+
+  document.addEventListener('mousemove', e => {
+    if (!current) { setInteractive(false); hovering = false; return; }
+    const overNote = noteOpen() && inArea(noteArea(), e.clientX, e.clientY);
+    const nearBfly = state === 'reading' && nearButterfly(e.clientX, e.clientY);
+    hovering = overNote;
+    if (nearBfly) flutter(2.6, 1);
+    setInteractive(overNote || nearBfly);   // only used by the older way of telling main (TITLI_OVERLAY_CLASSIC)
+  });
+  document.addEventListener('mouseleave', () => { hovering = false; });
 
   function takeInsets(g) {
     if (!g) return;

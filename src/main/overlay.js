@@ -7,6 +7,10 @@ const { BrowserWindow, screen, ipcMain } = require('electron');
 const { EventEmitter } = require('events');
 const path = require('path');
 
+// TITLI_OVERLAY_CLASSIC=1 (tests only): the older way, where the page tells main when the pointer is over it
+const CLASSIC = process.env.TITLI_OVERLAY_CLASSIC === '1';
+const num = (v, lo, hi) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+
 class Overlay extends EventEmitter {
   constructor({ dev = false } = {}) {
     super();
@@ -15,9 +19,13 @@ class Overlay extends EventEmitter {
     this.ready = null;
     this.visible = false;
     this.protect = true;
+    this.areas = null;      // where the note and the butterfly are, in window points
+    this._poller = null;
+    this._on = false;
     ipcMain.on('overlay:event', (e, ev) => {
       if (!this.win || e.sender !== this.win.webContents || !ev || typeof ev.type !== 'string') return;
-      if (ev.type === 'interactive') { this._interactive(!!ev.on); return; }
+      if (ev.type === 'interactive') { if (CLASSIC) this._interactive(!!ev.on); return; }
+      if (ev.type === 'areas') { this._setAreas(ev); return; }
       this.emit('event', ev);
     });
     screen.on('display-metrics-changed', () => this._fit());
@@ -75,6 +83,7 @@ class Overlay extends EventEmitter {
 
   hide() {
     if (!this.win) return;
+    this.areas = null; this._stopPolling();
     this._interactive(false);
     this.win.hide();
     this.visible = false;
@@ -85,7 +94,40 @@ class Overlay extends EventEmitter {
 
   _interactive(on) {
     if (!this.win) return;
+    this._on = !!on;
     this.win.setIgnoreMouseEvents(!on, { forward: true });
+  }
+
+  // the page says where the note and the butterfly are; main watches the pointer itself and lets clicks in only there
+  _setAreas(ev) {
+    const note = ev.note && num(ev.note.x, -5000, 20000) && num(ev.note.y, -5000, 20000) && num(ev.note.w, 0, 3000) && num(ev.note.h, 0, 3000) ? ev.note : null;
+    const bfly = ev.bfly && num(ev.bfly.x, -5000, 20000) && num(ev.bfly.y, -5000, 20000) && num(ev.bfly.r, 0, 400) ? ev.bfly : null;
+    this.areas = note || bfly ? { note, bfly } : null;
+    if (ev.marks && typeof ev.marks === 'object') this.marks = ev.marks;
+    if (CLASSIC) return;
+    if (this.areas) this._startPolling();
+    else { this._stopPolling(); if (this._on) this._interactive(false); }
+  }
+
+  _startPolling() {
+    if (this._poller) return;
+    this._poller = setInterval(() => {
+      if (!this.win || this.win.isDestroyed() || !this.visible || !this.areas) { this._stopPolling(); return; }
+      const c = screen.getCursorScreenPoint(), b = this.win.getBounds();
+      const x = c.x - b.x, y = c.y - b.y, { note, bfly } = this.areas;
+      const inside = (!!note && x >= note.x && x <= note.x + note.w && y >= note.y && y <= note.y + note.h)
+        || (!!bfly && Math.hypot(x - bfly.x, y - bfly.y) <= bfly.r);
+      if (inside !== this._on) this._interactive(inside);
+    }, 40);
+  }
+
+  _stopPolling() { clearInterval(this._poller); this._poller = null; }
+
+  // where something on the page is on the physical screen (for the self-test that clicks it)
+  screenPoint(p) {
+    if (!this.win || !p) return null;
+    const b = this.win.getBounds(), pt = { x: Math.round(b.x + p.x), y: Math.round(b.y + p.y) };
+    return typeof screen.dipToScreenPoint === 'function' ? screen.dipToScreenPoint(pt) : pt;
   }
 
   _fit() {

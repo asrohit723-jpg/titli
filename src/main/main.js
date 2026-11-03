@@ -37,6 +37,9 @@ const TEST_UPDATE = process.env.TITLI_TEST_UPDATE === '1';
 // TITLI_TEST_PANEL=1: CI opens the panel over another app's full-screen window and checks it stays open;
 // TITLI_PANEL_CLASSIC=1 there opens it as an ordinary window instead, to compare
 const TEST_PANEL = process.env.TITLI_TEST_PANEL === '1', PANEL_CLASSIC = process.env.TITLI_PANEL_CLASSIC === '1';
+// TITLI_TEST_OVERLAY=1: CI shows a test note and prints where its ✕, its text and a reaction are on screen, so a
+// real mouse can click them; it logs what the note did, then quits
+const TEST_OVERLAY = process.env.TITLI_TEST_OVERLAY === '1';
 const log = (...a) => { if (DEV || TEST_UPDATE) console.log('[titli]', ...a); };
 
 app.on('second-instance', () => showPanel());
@@ -87,7 +90,21 @@ app.whenReady().then(() => {
     return;
   }
   if (store.unlockFailed) setTimeout(() => notify('Titli started fresh', 'Pair again with your people to keep sending butterflies.'), 1500);
-  if (!store.state.me.name && !TEST_UPDATE && !TEST_PANEL) setTimeout(showPanel, 600); // first run: say hello
+  if (!store.state.me.name && !TEST_UPDATE && !TEST_PANEL && !TEST_OVERLAY) setTimeout(showPanel, 600); // first run: say hello
+  if (TEST_OVERLAY) {
+    overlay.on('event', ev => console.log(`[titli] overlay event ${ev.type}${ev.r ? ' ' + ev.r : ''}`));
+    setTimeout(() => overlay.play({ id: 'testnote01', kind: 'note', fromName: 'Priya', text: 'Lunch at 1?', style: 'rose', at: Date.now() }, { anywhere: false }), 2500);
+    const marks = setInterval(() => {
+      const m = overlay.marks;
+      if (!m || !m.close) return;
+      clearInterval(marks);
+      setTimeout(() => {
+        const at = p => { const q = overlay.screenPoint(p); return q ? `${q.x},${q.y}` : '-'; };
+        console.log(`[titli] overlay marks close=${at(overlay.marks.close)} note=${at(overlay.marks.note)} react=${at(overlay.marks.react)} scale=${screen.getPrimaryDisplay().scaleFactor}`);
+      }, 1500);
+    }, 200);
+    setTimeout(() => app.exit(0), 60000);
+  }
   if (TEST_PANEL) setTimeout(() => {
     showPanel();
     const b = panel.getBounds();

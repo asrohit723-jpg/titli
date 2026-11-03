@@ -1,0 +1,75 @@
+name: Overlay check
+
+# On a real Windows PC (and a Mac): a test note lands, then a real mouse clicks its ✕, just beside the ✕, the note's
+# text and a reaction. Each must close the note (or react). Runs at 100% and 150% display scaling, with the older
+# way of handling clicks ("classic") and the current one, to compare.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Click the note with a real mouse
+        shell: pwsh
+        run: |
+          Add-Type @"
+          using System; using System.Runtime.InteropServices;
+          public static class Mouse {
+            [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+            [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+            [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int e);
+          }
+          "@
+          [Mouse]::SetProcessDPIAware() | Out-Null
+          $electron = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          $results = @()
+          foreach ($mode in @('classic', 'current')) {
+            foreach ($scale in @('1', '1.5')) {
+              foreach ($target in @('close', 'near-close', 'note', 'react')) {
+                Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force
+                $log = Join-Path $PWD "run-$mode-$scale-$target.log"
+                $env:TITLI_TEST_OVERLAY = '1'
+                $env:TITLI_OVERLAY_CLASSIC = $(if ($mode -eq 'classic') { '1' } else { '0' })
+                $env:APPDATA = Join-Path $PWD "data-$mode-$scale-$target"
+                $p = Start-Process -FilePath $electron -ArgumentList @('.', "--force-device-scale-factor=$scale", '--enable-unsafe-swiftshader') -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru
+                $marks = $null
+                for ($i = 0; $i -lt 120; $i++) { Start-Sleep -Milliseconds 250; $marks = Select-String -Path $log -Pattern 'overlay marks' -ErrorAction SilentlyContinue | Select-Object -Last 1; if ($marks) { break } }
+                if (-not $marks) { $results += "$mode scale=$scale ${target}: the note never showed"; $p | Stop-Process -Force -ErrorAction SilentlyContinue; continue }
+                $line = $marks.Line
+                $pt = switch ($target) {
+                  'close'      { [regex]::Match($line, 'close=(-?\d+),(-?\d+)') }
+                  'near-close' { [regex]::Match($line, 'close=(-?\d+),(-?\d+)') }
+                  'note'       { [regex]::Match($line, 'note=(-?\d+),(-?\d+)') }
+                  'react'      { [regex]::Match($line, 'react=(-?\d+),(-?\d+)') }
+                }
+                $x = [int]$pt.Groups[1].Value; $y = [int]$pt.Groups[2].Value
+                # just beside the ✕: 24 points to its right, past the edge of the note
+                if ($target -eq 'near-close') { $x += [int](24 * [double]$scale) }
+                # come in from the side, like a hand on a mouse
+                for ($k = 10; $k -ge 0; $k--) { [Mouse]::SetCursorPos($x - $k * 25, $y + $k * 18) | Out-Null; Start-Sleep -Milliseconds 30 }
+                Start-Sleep -Milliseconds 250
+                [Mouse]::mouse_event(0x0002, 0, 0, 0, 0); Start-Sleep -Milliseconds 60; [Mouse]::mouse_event(0x0004, 0, 0, 0, 0)
+                $want = if ($target -eq 'react') { 'overlay event react' } else { 'overlay event done' }
+                $ok = $false
+                for ($i = 0; $i -lt 60; $i++) { Start-Sleep -Milliseconds 250; if (Select-String -Path $log -Pattern $want -Quiet) { $ok = $true; break } }
+                $results += "$mode scale=$scale ${target} at ${x},${y}: $(if ($ok) { 'WORKS' } else { 'NOTHING HAPPENED' })"
+                [Mouse]::SetCursorPos(5, 5) | Out-Null
+                $p | Stop-Process -Force -ErrorAction SilentlyContinue
+              }
+            }
+          }
+          $results | ForEach-Object { Write-Output $_ }
+          $summary = ($results -join '%0A')
+          $bad = $results | Where-Object { $_ -like 'current *' -and $_ -notlike '*WORKS' }
+          if ($bad) { Write-Output "::error::Windows clicks failed%0A$summary"; exit 1 } else { Write-Output "::notice::Windows: every click on the note works%0A$summary" }
+      - if: always()
+        shell: pwsh
+        run: Get-ChildItem run-*.log | ForEach-Object { Write-Output "== $($_.Name)"; Get-Content $_ | Select-Object -Last 8 }
