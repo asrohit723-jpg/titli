@@ -75,3 +75,50 @@ jobs:
       - if: always()
         shell: pwsh
         run: Get-ChildItem run-*.log | ForEach-Object { Write-Output "== $($_.Name)"; Get-Content $_ | Select-Object -Last 8 }
+
+  mac:
+    strategy:
+      fail-fast: false
+      matrix: { os: [macos-14, macos-15] }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 20, cache: npm }
+      - run: npm ci && node -e "require('electron')" > /dev/null
+      - name: Click the note with a real mouse
+        run: |
+          cat > click.swift <<'SWIFT'
+          import CoreGraphics
+          import Foundation
+          let a = CommandLine.arguments, x = Double(a[1])!, y = Double(a[2])!
+          func post(_ t: CGEventType, _ p: CGPoint) { CGEvent(mouseEventSource: nil, mouseType: t, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap) }
+          for k in stride(from: 10, through: 0, by: -1) { post(.mouseMoved, CGPoint(x: x - Double(k) * 25, y: y + Double(k) * 18)); usleep(30000) }
+          usleep(250000)
+          post(.leftMouseDown, CGPoint(x: x, y: y)); usleep(60000); post(.leftMouseUp, CGPoint(x: x, y: y))
+          SWIFT
+          xcrun swiftc -O -o click click.swift
+          electron="$(node -e "process.stdout.write(require('electron'))")"
+          : > results.txt
+          for mode in classic current; do
+            for target in close near-close note react; do
+              pkill -f 'Electron.app/Contents' 2>/dev/null || true; sleep 1
+              log="run-$mode-$target.log"
+              TITLI_TEST_OVERLAY=1 TITLI_OVERLAY_CLASSIC=$([ $mode = classic ] && echo 1 || echo 0) "$electron" . --enable-unsafe-swiftshader --user-data-dir="$PWD/data-$mode-$target" > "$log" 2>&1 &
+              pid=$!
+              for i in $(seq 1 120); do grep -q 'overlay marks' "$log" && break; sleep 0.25; done
+              line="$(grep 'overlay marks' "$log" | tail -1)"
+              if [ -z "$line" ]; then echo "$mode $target: the note never showed" >> results.txt; kill $pid 2>/dev/null; continue; fi
+              key=$target; [ $target = near-close ] && key=close
+              xy="$(echo "$line" | sed -E "s/.*$key=(-?[0-9]+),(-?[0-9]+).*/\1 \2/")"; x=${xy% *}; y=${xy#* }
+              [ $target = near-close ] && x=$((x + 24))
+              ./click "$x" "$y"
+              want='overlay event done'; [ $target = react ] && want='overlay event react'
+              ok=no; for i in $(seq 1 60); do grep -q "$want" "$log" && { ok=yes; break; }; sleep 0.25; done
+              echo "$mode $target at $x,$y: $([ $ok = yes ] && echo WORKS || echo 'NOTHING HAPPENED')" >> results.txt
+              kill $pid 2>/dev/null || true
+            done
+          done
+          cat results.txt
+          if grep '^current' results.txt | grep -vq 'WORKS'; then echo "::error::$(sw_vers -productVersion): Mac clicks failed%0A$(sed 's/$/%0A/' results.txt | tr -d '\n')"; exit 1
+          else echo "::notice::$(sw_vers -productVersion): every click on the note works%0A$(sed 's/$/%0A/' results.txt | tr -d '\n')"; fi
