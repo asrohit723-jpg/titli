@@ -76,6 +76,68 @@ jobs:
         shell: pwsh
         run: Get-ChildItem run-*.log | ForEach-Object { Write-Output "== $($_.Name)"; Get-Content $_ | Select-Object -Last 8 }
 
+  windows-installed:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 20, cache: npm }
+      - run: npm ci && npm run build:helper
+      - name: Build and install Titli the way people get it
+        shell: pwsh
+        run: |
+          npx electron-builder --win --x64 --publish never *> build.log; if ($LASTEXITCODE) { Get-Content build.log -Tail 40; exit 1 }
+          $setup = Get-ChildItem dist/Titli-Setup-*.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          $exe = Get-ChildItem "$env:LOCALAPPDATA/Programs" -Recurse -Filter Titli.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { Write-Output "::error::Titli.exe not found after install"; exit 1 }
+          Get-Process Titli -ErrorAction SilentlyContinue | Stop-Process -Force
+          Write-Output "TITLI_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+      - name: Click the note with a real mouse (installed app, with and without the GPU)
+        shell: pwsh
+        run: |
+          Add-Type @"
+          using System; using System.Runtime.InteropServices;
+          public static class Mouse {
+            [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+            [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+            [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int e);
+          }
+          "@
+          [Mouse]::SetProcessDPIAware() | Out-Null
+          $results = @()
+          foreach ($gpu in @('default', 'swiftshader')) {
+            foreach ($scale in @('1', '1.25')) {
+              foreach ($target in @('close', 'note')) {
+                Get-Process Titli -ErrorAction SilentlyContinue | Stop-Process -Force
+                $log = Join-Path $PWD "inst-$gpu-$scale-$target.log"
+                $env:TITLI_TEST_OVERLAY = '1'; $env:TITLI_OVERLAY_CLASSIC = '0'
+                $env:APPDATA = Join-Path $PWD "idata-$gpu-$scale-$target"
+                $argv = @("--force-device-scale-factor=$scale"); if ($gpu -eq "swiftshader") { $argv += "--enable-unsafe-swiftshader" }
+                $p = Start-Process -FilePath $env:TITLI_EXE -ArgumentList $argv -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru
+                $marks = $null
+                for ($i = 0; $i -lt 120; $i++) { Start-Sleep -Milliseconds 250; $marks = Select-String -Path $log -Pattern 'overlay marks' -ErrorAction SilentlyContinue | Select-Object -Last 1; if ($marks) { break } }
+                if (-not $marks) { $results += "installed gpu=$gpu scale=$scale ${target}: the note never showed"; $p | Stop-Process -Force -ErrorAction SilentlyContinue; continue }
+                $pt = [regex]::Match($marks.Line, "$(if ($target -eq 'close') { 'close' } else { 'note' })=(-?\d+),(-?\d+)")
+                $x = [int]$pt.Groups[1].Value; $y = [int]$pt.Groups[2].Value
+                for ($k = 10; $k -ge 0; $k--) { [Mouse]::SetCursorPos($x - $k * 25, $y + $k * 18) | Out-Null; Start-Sleep -Milliseconds 30 }
+                Start-Sleep -Milliseconds 250
+                [Mouse]::mouse_event(0x0002, 0, 0, 0, 0); Start-Sleep -Milliseconds 60; [Mouse]::mouse_event(0x0004, 0, 0, 0, 0)
+                $ok = $false
+                for ($i = 0; $i -lt 60; $i++) { Start-Sleep -Milliseconds 250; if (Select-String -Path $log -Pattern 'overlay event done' -Quiet) { $ok = $true; break } }
+                $results += "installed gpu=$gpu scale=$scale ${target} at ${x},${y}: $(if ($ok) { 'WORKS' } else { 'NOTHING HAPPENED' })"
+                [Mouse]::SetCursorPos(5, 5) | Out-Null
+                $p | Stop-Process -Force -ErrorAction SilentlyContinue
+              }
+            }
+          }
+          $results | ForEach-Object { Write-Output $_ }
+          $summary = ($results -join '%0A')
+          if ($results | Where-Object { $_ -notlike '*WORKS' }) { Write-Output "::error::installed Titli: clicks failed%0A$summary"; exit 1 } else { Write-Output "::notice::installed Titli on Windows: clicks work%0A$summary" }
+      - if: always()
+        shell: pwsh
+        run: Get-ChildItem inst-*.log* | ForEach-Object { Write-Output "== $($_.Name)"; Get-Content $_ | Select-Object -Last 10 }
+
   mac:
     strategy:
       fail-fast: false
