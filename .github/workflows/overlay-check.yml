@@ -29,7 +29,8 @@ jobs:
           }
           "@
           [Mouse]::SetProcessDPIAware() | Out-Null
-          $electron = (node -e "process.stdout.write(require('electron'))")
+          node -e "require('electron')" | Out-Null    # Electron fetches its program the first time it's asked for
+          $electron = (node -e "process.stdout.write(require('electron'))" | Select-Object -Last 1).Trim()
           Write-Output "Electron: $electron (exists: $(Test-Path $electron))"
           $results = @()
           foreach ($mode in @('classic', 'current')) {
